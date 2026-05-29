@@ -1,0 +1,814 @@
+<html>
+<style type="text/css">
+*{   
+    margin:0;
+    padding:0;
+    border:0;
+    box-sizing:border-box;
+    overflow:hidden;
+}
+.app-container{
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    height: 100vh;
+    width: 100vw;
+}
+.canvas-panel{
+    overflow:hidden;
+}
+canvas{
+    display:block;
+    width:100%;
+    height:100%;
+    border:1px solid black;
+}
+.text-panel{
+    display:flex;
+    flex-direction:column;
+}
+.text-top{
+    flex:3;
+    min-height:0;
+}
+.text-bottom{
+    flex:1;
+    min-height:0;
+}
+textarea{
+    height:100%;
+    width:100%;
+    border:1px solid black;
+    resize:none;
+}
+</style>
+<head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/alasql/4.6.6/alasql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.38/Tone.js"></script>
+</head>
+<body>
+<div class="app-container">
+<div class="canvas-panel"><canvas id="theCanvas"></canvas></div>
+<div class="text-panel"><div class="text-top"><textarea id="theTextInput">0,1,60
+1,1,62
+2,1,64
+3,1,60</textarea></div>
+<div class="text-bottom"><textarea id="theTextOutput" readonly>Specified:
+Defaulted:
+Missing:</textarea></div>
+</div>
+</div>
+<script type="module">
+import erf from 'https://cdn.jsdelivr.net/gh/stdlib-js/math-base-special-erf@esm/index.mjs';
+const TAU = Math.PI*2;
+function getDetailedType(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+function topologicalSort(boxes, connections) {
+  const adj = new Map();
+  const indegree = new Map();
+  for (let i = 0; i < boxes.length; i++) {
+    adj.set(i, new Set());
+    indegree.set(i, 0);
+  }
+  connections.forEach(conn => {
+    const fromIndex = conn.from.box;
+    const toIndex = conn.to.box;
+    if (fromIndex < 0 || fromIndex >= boxes.length) {
+      return;
+    }
+    if (toIndex < 0 || toIndex >= boxes.length) {
+      return;
+    }
+    if (!adj.get(fromIndex).has(toIndex)) {
+      adj.get(fromIndex).add(toIndex);
+      indegree.set(toIndex, indegree.get(toIndex) + 1);
+    }
+  });
+  const queue = [];
+  const sorted = [];
+  for (let [idx, degree] of indegree) {
+    if (degree === 0) {
+      queue.push(idx);
+    }
+  }
+  if (queue.length === 0 && boxes.length > 0) {
+    let minDegree = Infinity;
+    let startNode = -1;
+    for (let [idx, degree] of indegree) {
+      if (degree < minDegree) {
+        minDegree = degree;
+        startNode = idx;
+      }
+    }
+    if (startNode !== -1) {
+      queue.push(startNode);
+    }
+  }
+  while (queue.length > 0) {
+    const current = queue.shift();
+    sorted.push(current);
+    const neighbors = adj.get(current);
+    if (neighbors && neighbors.size > 0) {
+      for (let neighbor of neighbors) {
+        const newDegree = indegree.get(neighbor) - 1;
+        indegree.set(neighbor, newDegree);
+        if (newDegree === 0) {
+          queue.push(neighbor);
+        }
+      }
+    }
+  }
+  if (sorted.length !== boxes.length) {
+    const unsorted = [];
+    for (let i = 0; i < boxes.length; i++) {
+      if (!sorted.includes(i)) {
+        unsorted.push(i);
+      }
+    }
+    return sorted;
+  }
+  return sorted;
+}
+function isDirectedAcyclicGraphBoxConnection(boxes, connections) {
+    const graph = {};
+    const visited = new Set();
+    const recursionStack = new Set();
+    
+    // Initialize graph
+    for (const box of boxes) {
+        graph[box] = [];
+    }
+    
+    // Build adjacency list
+    for (const conn of connections) {
+        const from = conn.from.box;
+        const to = conn.to.box;
+        
+        // Ensure both nodes exist in graph
+        if (!graph[from]) graph[from] = [];
+        if (!graph[to]) graph[to] = [];
+        
+        graph[from].push(to);
+    }
+    
+    function dfs(node) {
+        if (recursionStack.has(node)) return false;
+        if (visited.has(node)) return true;
+        
+        visited.add(node);
+        recursionStack.add(node);
+        
+        const neighbors = graph[node] || [];
+        for (const neighbor of neighbors) {
+            if (!dfs(neighbor)) return false;
+        }
+        
+        recursionStack.delete(node);
+        return true;
+    }
+    
+    // Get all unique nodes from boxes and connections
+    const allNodes = new Set(boxes);
+    for (const conn of connections) {
+        allNodes.add(conn.from.box);
+        allNodes.add(conn.to.box);
+    }
+    
+    for (const node of allNodes) {
+        if (!visited.has(node)) {
+            if (!dfs(node)) return false;
+        }
+    }
+    
+    return true;
+}
+function calculateWholeGraph(){
+    programState.latestTopologicalSort.forEach(boxIndex => {
+        box[boxIndex].generateDataFromParameters();
+        connections.filter(conn => conn.from.box === boxIndex).forEach(conn => {
+            box[conn.to.box].parameter[conn.to.inlet] = structuredClone(box[boxIndex].data);
+        });
+    });
+}
+class Box{
+    generateDataFromParameters(){
+        switch(this.kind){
+            case "fill":
+                this.data = [];
+                for(var fillRow=0;fillRow<this.parameter.rows;fillRow++){
+                    this.data[fillRow] = [];
+                    for(var fillColumn=0;fillColumn<this.parameter.columns;fillColumn++){
+                        this.data[fillRow][fillColumn] = this.parameter.fillValue;
+                    }
+                }
+                break;
+            case "hadamardMultiply":
+                this.data = [];
+                break;
+            case "identity":
+                this.data = [];
+                for(var fillRow=0;fillRow<this.parameter.rows;fillRow++){
+                    this.data[fillRow] = [];
+                    for(var fillColumn=0;fillColumn<this.parameter.columns;fillColumn++){
+                        this.data[fillRow][fillColumn] = (fillRow===fillColumn) ? 1 : 0;
+                    }
+                }
+                break;
+            case "plus":
+                this.data = this.parameter.firstAddend+this.parameter.secondAddend;
+                break;
+            case "zero":
+                this.data = [];
+                for(var fillRow=0;fillRow<this.parameter.rows;fillRow++){
+                    this.data[fillRow] = [];
+                    for(var fillColumn=0;fillColumn<this.parameter.columns;fillColumn++){
+                        this.data[fillRow][fillColumn] = 0;
+                    }
+                }
+                break;
+            default:
+                this.parameter = null;
+                this.label = null;
+                this.data = null;
+                break;
+        }
+    }
+    constructor(x,y,kind){
+        this.x = x;
+        this.y = y;
+        this.kind = kind;
+        this.selected = false;
+        this.parameter = structuredClone(boxDefault[this.kind]);
+        this.parameterSource = [];
+        this.inletCount = Object.keys(this.parameter).length;
+        for(var z=0;z<this.inletCount;z++){
+            this.parameterSource[z] = {kind:"specified"};
+        }
+        this.inletDivide = [];
+        this.inletCenter = [];
+        var inletHeight = programState.screenDim.menuTile/this.inletCount;
+        var halfInletHeight = inletHeight/2;
+        for(var z=0;z<this.inletCount;z++){
+            this.inletCenter.push(inletHeight*z+halfInletHeight);
+        }
+        for(var z=1;z<this.inletCount;z++){
+            this.inletDivide.push(inletHeight*z);
+        }
+        this.outletCount = 1;
+        this.outletDivide = [];
+        this.outletCenter = [programState.screenDim.halfTile];
+        this.generateDataFromParameters();
+    }
+}
+function isInRectangle(xTest,yTest,xBoundA,yBoundA,xBoundB,yBoundB){
+    return ((xTest>Math.min(xBoundA,xBoundB))&&(xTest<Math.max(xBoundA,xBoundB))&&(yTest>Math.min(yBoundA,yBoundB))&&(Math.max(yBoundA,yBoundB)));
+}
+function processToIcon(processIn){
+    switch(processIn){
+        case "balance": return "\u2696";
+        case "beta": return "\u{3B2}";
+        case "conversion": return "\u33A0";
+        case "convolution": return "\u2605";
+        case "data": return "\u2637";
+        case "difference": return "\u2206";
+        case "distribution": return "\u29EE";
+        case "fill": return "\u23F9";
+        case "gaussian": return "gs";
+        case "graph": return "\u23E7";
+        case "greaterOrEqual": return "\u2265";
+        case "hadamardMultiply": return "\u2299";
+        case "identity": return "1";
+        case "join": return "\u269E";
+        case "math": return "\u03A3";
+        case "matrix": return "\u25A6";
+        case "one": return "1";
+        case "ornament": return "\u269C";
+        case "plus": return "+";
+        case "randomize": return "\u2684";
+        case "selection": return "\u2B1A";
+        case "set": return "\u2208";
+        case "sieve": return "\u25D4";
+        case "split": return "\u269F";
+        case "uniform": return "un";
+        case "userProcess": return "\u270D";
+        case "x": return "\u2715";
+        case "zero": return "0";
+        default: return "FUCK";
+    }
+}
+function clearCanvas(){
+    ctx.fillStyle = "white";
+    ctx.fillRect(0,0,cnvs.clientWidth,cnvs.clientHeight);
+}
+function drawTextCentered(stringToDraw,centerX,centerY){
+    var textMetric = ctx.measureText(stringToDraw);
+    var halfWidth = (textMetric.actualBoundingBoxLeft-textMetric.actualBoundingBoxRight)/2;
+    var halfHeight = (textMetric.actualBoundingBoxAscent-textMetric.actualBoundingBoxDescent)/2;
+    ctx.fillText(stringToDraw,centerX+halfWidth,centerY+halfHeight);
+}
+function drawBraceletEditor(stateObject){
+    clearCanvas();
+    ctx.strokeStyle = "black";
+    ctx.beginPath();
+    ctx.arc(cnvs.width/2,cnvs.height/2,100,0,TAU);
+    ctx.stroke();
+}
+function drawNodeEditor(stateObject){
+    clearCanvas();
+    const menuTileNum = 20;
+    var menuTileSize = cnvs.clientWidth/menuTileNum;
+    var menuTileHalf = menuTileSize/2;
+    ctx.strokeStyle = "black";
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(0,menuTileSize);
+    ctx.lineTo(menuTileSize*menuHierarchy["main"].length,menuTileSize);
+    for(var a=0;a<menuHierarchy["main"].length;a++){
+        ctx.moveTo((a+1)*menuTileSize,0);
+        ctx.lineTo((a+1)*menuTileSize,menuTileSize);
+    }
+    ctx.stroke();
+    ctx.fillStyle = "black";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "24px Courier New";
+    for(var a=0;a<menuHierarchy["main"].length;a++){
+        drawTextCentered(processToIcon(menuHierarchy["main"][a]),a*menuTileSize+menuTileHalf,menuTileHalf);
+    }
+    if(programState.submenu!="none"){
+        ctx.beginPath();
+        for(var a=0;a<menuHierarchy[programState.submenu].length;a++){
+            ctx.moveTo((a+1)*menuTileSize,menuTileSize);
+            ctx.lineTo((a+1)*menuTileSize,menuTileSize*2);
+            drawTextCentered(processToIcon(menuHierarchy[programState.submenu][a]),a*menuTileSize+menuTileHalf,menuTileSize+menuTileHalf);
+        }
+        ctx.moveTo(0,menuTileSize*2);
+        ctx.lineTo(menuHierarchy[programState.submenu].length*menuTileSize,menuTileSize*2);
+        ctx.stroke();
+    }
+    ctx.beginPath();
+    var arrowLength = menuTileHalf/2;
+    for(var a=0;a<connection.length;a++){
+        var fromBox = box[connection[a].from.box];
+        var toBox = box[connection[a].to.box];
+        var fromOutlet = connection[a].from.outlet;
+        var toInlet = connection[a].to.inlet;
+        var start = {x:fromBox.x+menuTileHalf,y:fromBox.y-menuTileHalf+fromBox.outletCenter[fromOutlet]};
+        var end = {x:toBox.x-menuTileHalf,y:toBox.y-menuTileHalf+toBox.inletCenter[toInlet]};
+        var xDif = end.x-start.x;
+        var yDif = end.y-start.y;
+        var lineDirection = Math.atan2(yDif,xDif);
+        var midpoint = {x:xDif/2+start.x,y:yDif/2+start.y};
+        ctx.moveTo(start.x,start.y);
+        ctx.lineTo(end.x,end.y);
+        ctx.moveTo(midpoint.x,midpoint.y);
+        ctx.lineTo(midpoint.x+Math.cos(lineDirection+Math.PI*2/3)*arrowLength,midpoint.y+Math.sin(lineDirection+Math.PI*2/3)*arrowLength);
+        ctx.moveTo(midpoint.x,midpoint.y);
+        ctx.lineTo(midpoint.x+Math.cos(lineDirection-Math.PI*2/3)*arrowLength,midpoint.y+Math.sin(lineDirection-Math.PI*2/3)*arrowLength);
+    }
+    ctx.stroke();
+    var xletWidth = programState.screenDim.xletWidth;
+    for(var a=0;a<box.length;a++){
+        if(box[a].selected){
+            ctx.setLineDash([5, 3])
+        }
+        else{
+            ctx.setLineDash([]);
+        }
+        ctx.fillStyle = "white";
+        ctx.fillRect(box[a].x-menuTileHalf,box[a].y-menuTileHalf,menuTileSize,menuTileSize);
+        ctx.fillStyle = "black";
+        ctx.strokeRect(box[a].x-menuTileHalf,box[a].y-menuTileHalf,menuTileSize,menuTileSize);
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(box[a].x+menuTileHalf-xletWidth,box[a].y-menuTileHalf);
+        ctx.lineTo(box[a].x+menuTileHalf-xletWidth,box[a].y+menuTileHalf);
+        if(box[a].inletCount>0){
+            ctx.moveTo(box[a].x-menuTileHalf+xletWidth,box[a].y-menuTileHalf);
+            ctx.lineTo(box[a].x-menuTileHalf+xletWidth,box[a].y+menuTileHalf);
+            var inletHeight = programState.screenDim.menuTile/box[a].inletCount;
+            for(var b=1;b<box[a].inletCount;b++){
+                ctx.moveTo(box[a].x-menuTileHalf,inletHeight*b+box[a].y-menuTileHalf);
+                ctx.lineTo(box[a].x-menuTileHalf+xletWidth,inletHeight*b+box[a].y-menuTileHalf);
+            }
+        }
+        else{
+            ctx.font = "12px Courier New";
+            ctx.fillText("D",-0.75*menuTileHalf+box[a].x,box[a].y);
+        }
+        var outletHeight = programState.screenDim.menuTile/box[a].outletCount;
+        for(var b=1;b<box[a].outletCount;b++){
+            ctx.moveTo(box[a].x+menuTileHalf,outletHeight*b+box[a].y-menuTileHalf);
+            ctx.lineTo(box[a].x+menuTileHalf-xletWidth,outletHeight*b+box[a].y-menuTileHalf);
+        }
+        ctx.stroke();
+        ctx.font = "24px Courier New";
+        drawTextCentered(processToIcon(box[a].kind),box[a].x,box[a].y);
+    }
+}
+function redraw(stateObject){
+    clearCanvas();
+    switch(stateObject.screen){
+        case "nodeEditor":
+            drawNodeEditor(stateObject);
+            break;
+        case "braceletEditor":
+            drawBraceletEditor(stateObject);
+            break;
+    }
+}
+function updateTxtIn(stateObject){
+    if(stateObject.selectedBoxNum===1){
+        var stringToShow = "";
+        if(box[stateObject.oneSelectedBox].parameter!==null){
+            stringToShow += "PARAMETERS:\n";
+            var keyLine = "";
+            var valueLine = "";
+            for(var [key,value] of Object.entries(box[stateObject.oneSelectedBox].parameter)){
+                keyLine += key+",";
+                valueLine += value+",";
+            }
+            keyLine = keyLine.substring(0,keyLine.length-1)+"\n";
+            valueLine = valueLine.substring(0,valueLine.length-1)+"\n";
+            stringToShow += keyLine+valueLine;
+        }
+        if(box[stateObject.oneSelectedBox].data!==null){
+            stringToShow += "DATA:\n";
+            console.log(getDetailedType(box[stateObject.oneSelectedBox].data));
+            switch(getDetailedType(box[stateObject.oneSelectedBox].data)){
+                case 'array':
+                    for(var a=0;a<box[stateObject.oneSelectedBox].data.length;a++){
+                        for(var b=0;b<box[stateObject.oneSelectedBox].data[a].length;b++){
+                            stringToShow += box[stateObject.oneSelectedBox].data[a][b]
+                            if(b<box[stateObject.oneSelectedBox].data[a].length-1){
+                                stringToShow += ",";
+                            }
+                        }
+                        stringToShow += "\n";
+                    }
+                    break;
+                case 'number':
+                    stringToShow += box[stateObject.oneSelectedBox].data;
+                    break;
+            }
+            
+        }
+        txtIn.value = stringToShow;
+    }
+    else{
+        txtIn.value = "";
+    }
+};
+function updateTxtOut(stateObject){
+    var outString = "menu: "+programState.submenu
+    if(stateObject.subprocess!="none"){
+        outString += "\nselection: "+programState.subprocess;
+    }
+    txtOut.value = outString;
+}
+function interpretMouseCoordinate(mX,mY){
+    if(mY<programState.screenDim.menuTile){
+        var whichSquare = Math.floor(mX/programState.screenDim.menuTile);
+        if(whichSquare<menuHierarchy["main"].length){
+            return {type:"mainMenu",detail:whichSquare};
+        }
+    }
+    if(programState.submenu!="none"){
+        if((mY<programState.screenDim.menuTile*2)&&(mY>programState.screenDim.menuTile)&&(mX<menuHierarchy[programState.submenu].length*programState.screenDim.menuTile)){
+            var whichSquare = Math.floor(mX/programState.screenDim.menuTile);
+            if(whichSquare<menuHierarchy[programState.submenu].length){
+                return {type:"submenu",detail:whichSquare};
+            }
+        }
+    }
+    for(var a=0;a<box.length;a++){
+        if((Math.abs(mX-box[a].x)<programState.screenDim.halfTile)&&(Math.abs(mY-box[a].y)<programState.screenDim.halfTile)){
+            if(Math.abs(mX-box[a].x)<programState.screenDim.halfTile-programState.screenDim.xletWidth){
+                return {type:"boxBody",box:a};
+            }
+            else{
+                if(mX<box[a].x){
+                    return {type:"inlet",box:a,inlet:Math.floor((mY-box[a].y+programState.screenDim.halfTile)/(programState.screenDim.menuTile/box[a].inletCount))};
+                }
+                else{
+                    return {type:"outlet",box:a,outlet:Math.floor((mY-box[a].y+programState.screenDim.halfTile)/(programState.screenDim.menuTile/box[a].outletCount))};
+                }
+            }
+        }
+    }
+    return {type:"background"};
+}
+const cnvs = document.getElementById("theCanvas");
+cnvs.width = cnvs.getBoundingClientRect().width;
+cnvs.height = cnvs.getBoundingClientRect().height;
+cnvs.setAttribute('tabindex',0);
+const ctx = cnvs.getContext("2d");
+const txtIn = document.getElementById("theTextInput");
+const txtOut = document.getElementById("theTextOutput");
+// Musical data types
+// Timepoints and durations can use common formats, just interpreted differently
+// Index is for index within set, sieve, etc.
+const mdUnit = new Set(["pitch","pitchClass","frequency","interval","time","beat","index"]);
+// absolute is for timepoints, absolute pitch
+// relativeOnLine is for durations, frequency differences
+// relativeInCircle is for difference within pitchClassSet, sieve
+const mdRelativity = new Set(["absolute","relativeOnLine","relativeInCircle"]);
+const mdDomain = new Set(["float","integer","binary","set","rational"]);
+const mdtRepresentation = {"pitch":["midiNote","noteNameOctave"],"pitchClass":["modulus","noteName"]};
+
+//Add: Current screen, saved settings, current data/process
+var programState = {screen:"nodeEditor",submenu:"none",subprocess:"none",
+    screenDim:{width:cnvs.width,height:cnvs.height,menuTile:(cnvs.width/20),xletWidth:8},
+    selectedBoxNum:0,oneSelectedBox:-1,
+    canvasClipboard:{content:[],x:0,y:0,relativePosition:[],nthCopy:0},
+    dragFrom:{x:-1,y:-1},
+    latestTopologicalSort:[]};
+programState.screenDim.halfTile = programState.screenDim.menuTile/2;
+var menuHierarchy = {"main":["data","math","distribution","matrix","sieve","conversion","userProcess","x"],
+"data":["data"],
+"math":["plus","hadamardMultiply"],
+"distribution":["beta","gaussian","uniform"],
+"matrix":["fill","identity","zero"],
+"sieve":["sieve"],
+"conversion":[],
+"userProcess":[]};
+var boxDefault = {
+    "beta":{columns:3,rows:3,alpha:1,beta:1},
+    "data":{},
+    "fill":{columns:3,rows:3,fillValue:1},
+    "gaussian":{columns:3,rows:3,mean:0,standardDeviation:1},
+    "hadamardMultiply":{firstFactor:0,secondFactor:0},
+    "identity":{columns:3,rows:3},
+    "plus":{firstAddend:2,secondAddend:2},
+    "sieve":{sieveIn:"10010"},
+    "uniform":{columns:3,rows:3,lowerBound:0,upperBound:1},
+    "zero":{columns:3,rows:3}
+};
+var box = [];
+var connection = [];
+
+var synth;
+var whichClick = 0;
+cnvs.addEventListener('mousedown', (e) => {
+    programState.dragFrom.x = e.clientX-cnvs.offsetLeft;
+    programState.dragFrom.y = e.clientY-cnvs.offsetTop;
+});
+cnvs.addEventListener('mouseup', async (e) => {
+    var mouseDownOn = -1;
+    for(var a=0;a<box.length;a++){
+        if((Math.abs(programState.dragFrom.x-box[a].x)<programState.screenDim.menuTile/2)&&(Math.abs(programState.dragFrom.y-box[a].y)<programState.screenDim.menuTile/2)){
+            mouseDownOn = a;
+        }
+    }
+    var needToRedraw = false;
+    var foundActionForClick = false;
+    var mouseX = e.clientX-cnvs.offsetLeft;
+    var mouseY = e.clientY-cnvs.offsetTop;
+    var mouseDownResult = interpretMouseCoordinate(programState.dragFrom.x,programState.dragFrom.y);
+    var mouseUpResult = interpretMouseCoordinate(mouseX,mouseY);
+    switch(mouseDownResult.type){
+        case "boxBody":
+            switch(mouseUpResult.type){
+                case "boxBody":
+                    if(mouseDownResult.box==mouseUpResult.box){
+                        if(e.shiftKey){
+                            box[mouseUpResult.box].selected = !box[mouseUpResult.box].selected;
+                            if(box[mouseUpResult.box].selected){
+                                programState.selectedBoxNum += 1;
+                            }
+                            else{
+                                programState.selectedBoxNum -= 1;
+                            }
+                            if(programState.selectedBoxNum==1){
+                                programState.oneSelectedBox = mouseUpResult.box;
+                            }
+                        }
+                        else{
+                            for(var a=0;a<box.length;a++){
+                                box[a].selected = false;
+                            }
+                            box[mouseUpResult.box].selected = true;
+                            programState.selectedBoxNum = 1;
+                            programState.oneSelectedBox = mouseUpResult.box;
+                        }
+                    }
+                    else{
+                        //Alter to prevent cycles
+                        var matchingConnection = connection.findIndex(conn => conn.from.box === mouseDownResult.box && conn.to.box === mouseUpResult.box && conn.from.outlet === mouseDownResult.outlet && conn.to.inlet === mouseUpResult.inlet);
+                        if(matchingConnection>-1){
+                            connection.splice(matchingConnection,1);
+                        }
+                        else{
+                            connection.push({from:{box:mouseDownResult.box,outlet:mouseDownResult.outlet},to:{box:mouseUpResult.box,inlet:mouseUpResult.inlet}});
+                        }
+                    }
+                    break;
+                case "background":
+                    if(programState.oneSelectedBox!=-1){
+                        box[programState.oneSelectedBox].x += mouseX-programState.dragFrom.x;
+                        box[programState.oneSelectedBox].y += mouseY-programState.dragFrom.y;
+                    }
+                    else{
+                        //Should only do this moving if the original click was on one of the selected boxes
+                        if(box[mouseDownResult.box].selected){
+                            for(var a=0;a<box.length;a++){
+                                if(box[a].selected){
+                                    box[a].x += mouseX-programState.dragFrom.x;
+                                    box[a].y += mouseY-programState.dragFrom.y;
+                                    box[a].x = Math.min(programState.screenDim.width,Math.max(0,box[a].x));
+                                    box[a].y = Math.min(programState.screenDim.height,Math.max(0,box[a].y));
+                                }
+                            }
+                        }
+                        else{
+                            box[mouseDownResult.box].x += mouseX-programState.dragFrom.x;
+                            box[mouseDownResult.box].y += mouseY-programState.dragFrom.y;
+                            box[mouseDownResult.box].x = Math.min(programState.screenDim.width,Math.max(0,box[mouseDownResult.box].x));
+                            box[mouseDownResult.box].y = Math.min(programState.screenDim.height,Math.max(0,box[mouseDownResult.box].y));
+                        }
+                    }
+                    break;
+            }
+            break;
+        case "background":
+            if(programState.subprocess==="none"){
+                if(!e.shiftKey){
+                    for(var a=0;a<box.length;a++){
+                        box[a].selected = false;
+                    }
+                    programState.selectedBoxNum = 0;
+                }
+                for(var a=0;a<box.length;a++){
+                    if(isInRectangle(box[a].x,box[a].y,programState.dragFrom.x,programState.dragFrom.y,mouseX,mouseY)){
+                        if(!box[a].selected){
+                            box[a].selected = true;
+                            programState.selectedBoxNum += 1;
+                            programState.oneSelectedBox = a;
+                        }
+                    }
+                }
+                if(programState.selectedBoxNum!==1){
+                    programState.oneSelectedBox = -1;
+                }
+            }
+            else{
+                box[box.length] = new Box(mouseX,mouseY,programState.subprocess);
+                if(!e.shiftKey){
+                    programState.subprocess = "none";
+                }
+            }
+            break;
+        case "mainMenu":
+            if(mouseDownResult.detail!=menuHierarchy["main"].length-1){
+                programState.submenu = menuHierarchy["main"][mouseDownResult.detail];
+            }
+            else{
+                programState.submenu = "none";
+                programState.subprocess = "none";
+            }
+            break;
+        case "outlet":
+            switch(mouseUpResult.type){
+                case "inlet":
+                    var matchingConnection = connection.findIndex(conn => conn.from.box === mouseDownResult.box && conn.to.box === mouseUpResult.box && conn.from.outlet === mouseDownResult.outlet && conn.to.inlet === mouseUpResult.inlet);
+                    if(matchingConnection>-1){
+                        box[mouseUpResult.to.box].parameterSource[mouseUpResult.inlet] = {kind:"specified"};
+                        box[mouseUpResult.to.box].parameter[mouseUpResult.inlet] = Object.values(boxDefault[box[mouseUpResult.to.box].kind])[mouseUpResult.to.inlet];
+                        connection.splice(matchingConnection,1);
+                    }
+                    else{
+                        connection.push({from:{box:mouseDownResult.box,outlet:mouseDownResult.outlet},to:{box:mouseUpResult.box,inlet:mouseUpResult.inlet}});
+                    }
+                    if(!isDirectedAcyclicGraphBoxConnection(box,connection)){
+                        connection.pop()
+                    }
+                    else{
+                        box[mouseUpResult.to.box].parameterSource[mouseUpResult.inlet] = {kind:"derived",from:{box:mouseDownResult.from.box,outlet:mouseDownResult.from.outlet}};
+                    };
+                    programState.latestTopologicalSort = topologicalSort(box,connection);
+                    break;
+            }
+            break;
+        case "submenu":
+            if(mouseUpResult.type==="background"){
+                box[box.length] = new Box(mouseX,mouseY,menuHierarchy[programState.submenu][mouseDownResult.detail]);
+            }
+            else{
+                programState.subprocess = menuHierarchy[programState.submenu][mouseDownResult.detail];
+            }
+            break;
+    }
+    /*if(whichClick===0){
+        await Tone.start();
+        var synth = new Tone.Synth().toDestination();
+        synth.triggerAttackRelease("C4", "8n");
+        whichClick = 1;
+    }
+    else{
+        var synth = new Tone.Synth().toDestination();
+        var part = new Tone.Part((time,note) => {synth.triggerAttackRelease(note,"8n",time);
+            }, [[0, "C4"],["0:2", "C5"], ["0:3:2", "G4"]]).start(0);
+        Tone.Transport.bpm.value = 400;
+        Tone.Transport.start();
+        Tone.Transport.position = "0:0:0";
+    }*/
+    redraw(programState);
+    updateTxtIn(programState);
+    updateTxtOut(programState);
+});
+cnvs.addEventListener('keydown', (e) => {
+    e.preventDefault();
+    if(((e.key==="c")||(e.key==="x"))&&(e.ctrlKey)){
+        if(programState.selectedBoxNum>0){
+            programState.canvasClipboard.nthCopy = 0;
+            programState.canvasClipboard.content = [];
+            programState.canvasClipboard.x = programState.screenDim.width;
+            programState.canvasClipboard.y = programState.screenDim.height;
+            var lowestTopLeftness = programState.canvasClipboard.x+programState.canvasClipboard.y;
+            for(var a=0;a<box.length;a++){
+                if(box[a].selected){
+                    if(box[a].x+box[a].y<lowestTopLeftness){
+                        programState.canvasClipboard.x = box[a].x;
+                        programState.canvasClipboard.y = box[a].y;
+                        lowestTopLeftness = box[a].x+box[a].y;
+                    }
+                    programState.canvasClipboard.content.push(structuredClone(box[a]));
+                }
+            }
+            programState.canvasClipboard.relativePosition = [];
+            for(var a=0;a<box.length;a++){
+                if(box[a].selected){
+                    programState.canvasClipboard.relativePosition.push({x:box[a].x-programState.canvasClipboard.x,y:box[a].y-programState.canvasClipboard.y});
+                }
+            }
+            if(e.key==="x"){
+                for(var a=0;a<box.length;a++){
+                    if(box[a].selected){
+                        box.splice(a,1);
+                        a--;
+                    }
+                }
+                programState.canvasClipboard.nthCopy = -1;
+                redraw();
+            }
+        }
+    }
+    if((e.key==="v")&&(e.ctrlKey)){
+        if(programState.canvasClipboard.content.length>0){
+            for(var a=0;a<box.length;a++){
+                box[a].selected = false;
+            }
+            programState.canvasClipboard.nthCopy += 1;
+            for(var a=0;a<programState.canvasClipboard.content.length;a++){
+                box.push(structuredClone(programState.canvasClipboard.content[a]));
+                box[box.length-1].x = programState.canvasClipboard.nthCopy*programState.screenDim.menuTile/2+programState.canvasClipboard.relativePosition[a].x+programState.canvasClipboard.x;
+                box[box.length-1].y = programState.canvasClipboard.nthCopy*programState.screenDim.menuTile/2+programState.canvasClipboard.relativePosition[a].y+programState.canvasClipboard.y;
+            }
+            redraw(programState);
+        }
+    }
+    if(e.key==="Tab"){
+        switch(programState.screen){
+            case "nodeEditor":
+                programState.screen = "braceletEditor";
+                break;
+            case "braceletEditor":
+                programState.screen = "nodeEditor";
+                break;
+        }
+        redraw(programState);
+    }
+});
+txtIn.addEventListener('keydown', (e) => {
+    if((e.code==="Enter")&&(e.ctrlKey)){
+        var valid = true;
+        var lines = txtIn.value.split("\n");
+        for(var a=0;a<lines.length;a++){
+            lines[a] = lines[a].split(",");
+            for(var b=0;b<lines[a].length;b++){
+                if(isNaN(lines[a][b])){
+                    valid = false;
+                }
+            }
+        }
+        if(valid){
+            txtIn.style = "background-color:#ABDCAB";
+        }
+        else{
+            txtIn.style = "background-color:#DCABAB";
+        }
+    }
+});
+
+var db = new alasql.Database('mybase');
+db.exec('CREATE TABLE testData (midiNote INT, beat INT, duration INT)');
+db.exec('INSERT INTO testData (2,5,1)');
+db.exec('INSERT INTO testData (3,6,2)');
+db.exec('INSERT INTO testData (2,7,1)');
+var res = db.exec('SELECT midiNote,beat FROM testData ORDER BY midiNote');
+redraw(programState);
+</script>
+</body>
+</html>
