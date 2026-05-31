@@ -233,15 +233,18 @@ function tryToAddRemoveConnection(fromBox,fromOutlet,toBox,toInlet){
 }
 function calculateWholeGraph(){
     programState.latestTopologicalSort.forEach(boxIndex => {
-        box[boxIndex].parameterSource.filter(src => src.kind ==="derived").forEach(src => {
-            console.log(JSON.stringify(src));
-            box[boxIndex].parameterValue[src] = structuredClone(box[src.from.box].data[src.from.outlet]);
-        });
+        // Iterate through parameterSource indices
+        for (let inletIdx = 0; inletIdx < box[boxIndex].parameterSource.length; inletIdx++) {
+            const src = box[boxIndex].parameterSource[inletIdx];
+            if (src.kind === "derived") {
+                console.log(`Box ${boxIndex} inlet ${inletIdx} gets from box ${src.from.box} outlet ${src.from.outlet}`);
+                // Make sure the source box has data at that outlet
+                if (box[src.from.box] && box[src.from.box].data && box[src.from.box].data[src.from.outlet] !== undefined) {
+                    box[boxIndex].parameterValue[inletIdx] = structuredClone(box[src.from.box].data[src.from.outlet]);
+                }
+            }
+        }
         box[boxIndex].generateDataFromParameters();
-        /*
-        connections.filter(conn => conn.from.box === boxIndex).forEach(conn => {
-            box[conn.to.box].parameterValue[conn.to.inlet] = structuredClone(box[boxIndex].data);
-        });*/
     });
 }
 class Box{
