@@ -60,10 +60,38 @@ Missing:</textarea></div>
 <script type="module">
 import erf from 'https://cdn.jsdelivr.net/gh/stdlib-js/math-base-special-erf@esm/index.mjs';
 const TAU = Math.PI*2;
+function normalDistribution(){
+    return Math.sqrt(-2*Math.log(Math.random()))*Math.cos(TAU*Math.random());
+}
+function gammaDistribution(shape, scale) {
+    if (shape < 1) {
+        return gammaRandom(shape + 1, scale) * Math.pow(Math.random(), 1 / shape);
+    }
+    const d = shape - 1/3;
+    const c = 1 / Math.sqrt(9 * d);
+    while (true) {
+        let x = standardNormal();
+        let v = Math.pow(1 + c * x, 3);
+        if (v > 0) {
+            const u = Math.random();
+            if (u < 1 - 0.0331 * Math.pow(x, 4)) {
+                return d * v * scale;
+            }
+            if (Math.log(u) < 0.5 * Math.pow(x, 2) + d * (1 - v + Math.log(v))) {
+                return d * v * scale;
+            }
+        }
+    }
+}
 function getDetailedType(value) {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'array';
-  return typeof value;
+    if(value === null){return 'null'}
+    if(Array.isArray(value)){
+        if(Array.isArray(value[0])){
+            return 'array2D';
+        }
+        return 'array1D';
+    }
+    return typeof value;
 }
 function topologicalSort(boxes, connections) {
   const adj = new Map();
@@ -184,12 +212,36 @@ function isDirectedAcyclicGraphBoxConnection(boxes, connections) {
     
     return true;
 }
+function tryToAddRemoveConnection(fromBox,fromOutlet,toBox,toInlet){
+    var matchingConnection = connection.findIndex(conn => conn.from.box === fromBox && conn.to.box === toBox && conn.from.outlet === fromOutlet && conn.to.inlet === toInlet);
+    if(matchingConnection>-1){
+        box[toBox].parameterSource[toInlet] = {kind:"specified"};
+        box[toBox].parameterValue[toInlet] = boxDefault.parameterValue[box[toBox].kind][toInlet];
+        connection.splice(matchingConnection,1);
+    }
+    else{
+        connection.push({from:{box:fromBox,outlet:fromOutlet},to:{box:toBox,inlet:toInlet}});
+    }
+    if(!isDirectedAcyclicGraphBoxConnection(box,connection)){
+        connection.pop()
+    }
+    else{
+        box[toBox].parameterSource[toInlet] = {kind:"derived",from:{box:fromBox,outlet:fromOutlet}};
+    };
+    programState.latestTopologicalSort = topologicalSort(box,connection);
+    calculateWholeGraph();
+}
 function calculateWholeGraph(){
     programState.latestTopologicalSort.forEach(boxIndex => {
-        box[boxIndex].generateDataFromParameters();
-        connections.filter(conn => conn.from.box === boxIndex).forEach(conn => {
-            box[conn.to.box].parameter[conn.to.inlet] = structuredClone(box[boxIndex].data);
+        box[boxIndex].parameterSource.filter(src => src.kind ==="derived").forEach(src => {
+            console.log(JSON.stringify(src));
+            box[boxIndex].parameterValue[src] = structuredClone(box[src.from.box].data[src.from.outlet]);
         });
+        box[boxIndex].generateDataFromParameters();
+        /*
+        connections.filter(conn => conn.from.box === boxIndex).forEach(conn => {
+            box[conn.to.box].parameterValue[conn.to.inlet] = structuredClone(box[boxIndex].data);
+        });*/
     });
 }
 class Box{
@@ -197,10 +249,19 @@ class Box{
         switch(this.kind){
             case "fill":
                 this.data = [];
-                for(var fillRow=0;fillRow<this.parameter.rows;fillRow++){
+                for(var fillRow=0;fillRow<this.parameterValue[1];fillRow++){
                     this.data[fillRow] = [];
-                    for(var fillColumn=0;fillColumn<this.parameter.columns;fillColumn++){
-                        this.data[fillRow][fillColumn] = this.parameter.fillValue;
+                    for(var fillColumn=0;fillColumn<this.parameterValue[0];fillColumn++){
+                        this.data[fillRow][fillColumn] = this.parameterValue[2];
+                    }
+                }
+                break;
+            case "gaussian":
+                this.data = [];
+                for(var fillRow=0;fillRow<this.parameterValue[1];fillRow++){
+                    this.data[fillRow] = [];
+                    for(var fillColumn=0;fillColumn<this.parameterValue[0];fillColumn++){
+                        this.data[fillRow][fillColumn] = normalDistribution()*this.parameterValue[3]+this.parameterValue[2];
                     }
                 }
                 break;
@@ -209,40 +270,54 @@ class Box{
                 break;
             case "identity":
                 this.data = [];
-                for(var fillRow=0;fillRow<this.parameter.rows;fillRow++){
+                for(var fillRow=0;fillRow<this.parameterValue[1];fillRow++){
                     this.data[fillRow] = [];
-                    for(var fillColumn=0;fillColumn<this.parameter.columns;fillColumn++){
+                    for(var fillColumn=0;fillColumn<this.parameterValue[0];fillColumn++){
                         this.data[fillRow][fillColumn] = (fillRow===fillColumn) ? 1 : 0;
                     }
                 }
                 break;
             case "plus":
-                this.data = this.parameter.firstAddend+this.parameter.secondAddend;
+                this.data = this.parameterValue[0]+this.parameterValue[1];
+                break;
+            case "uniform":
+                var range = this.parameterValue[3]-this.parameterValue[2];
+                this.data = [];
+                for(var fillRow=0;fillRow<this.parameterValue[1];fillRow++){
+                    this.data[fillRow] = [];
+                    for(var fillColumn=0;fillColumn<this.parameterValue[0];fillColumn++){
+                        this.data[fillRow][fillColumn] = Math.random()*range+this.parameterValue[2];
+                    }
+                }
                 break;
             case "zero":
                 this.data = [];
-                for(var fillRow=0;fillRow<this.parameter.rows;fillRow++){
+                for(var fillRow=0;fillRow<this.parameterValue[1];fillRow++){
                     this.data[fillRow] = [];
-                    for(var fillColumn=0;fillColumn<this.parameter.columns;fillColumn++){
+                    for(var fillColumn=0;fillColumn<this.parameterValue[0];fillColumn++){
                         this.data[fillRow][fillColumn] = 0;
                     }
                 }
                 break;
             default:
-                this.parameter = null;
+                this.parameterValue = null;
                 this.label = null;
                 this.data = null;
                 break;
         }
+        //This is for the temporary state of affairs that every box happens to have one outlet
+        //When there can be multiple outlets, that will need to be handled within the switch
+        this.data = [this.data];
     }
     constructor(x,y,kind){
         this.x = x;
         this.y = y;
         this.kind = kind;
         this.selected = false;
-        this.parameter = structuredClone(boxDefault[this.kind]);
+        this.parameterName = structuredClone(boxDefault.parameterName[this.kind]);
+        this.parameterValue = structuredClone(boxDefault.parameterValue[this.kind]);
         this.parameterSource = [];
-        this.inletCount = Object.keys(this.parameter).length;
+        this.inletCount = this.parameterName.length;
         for(var z=0;z<this.inletCount;z++){
             this.parameterSource[z] = {kind:"specified"};
         }
@@ -422,27 +497,35 @@ function redraw(stateObject){
 function updateTxtIn(stateObject){
     if(stateObject.selectedBoxNum===1){
         var stringToShow = "";
-        if(box[stateObject.oneSelectedBox].parameter!==null){
+        if(box[stateObject.oneSelectedBox].parameterName!==null){
             stringToShow += "PARAMETERS:\n";
             var keyLine = "";
             var valueLine = "";
-            for(var [key,value] of Object.entries(box[stateObject.oneSelectedBox].parameter)){
-                keyLine += key+",";
-                valueLine += value+",";
+            for(var a=0;a<box[stateObject.oneSelectedBox].parameterName.length;a++){
+                keyLine += box[stateObject.oneSelectedBox].parameterName[a]+",";
+                valueLine += box[stateObject.oneSelectedBox].parameterValue[a]+",";
             }
             keyLine = keyLine.substring(0,keyLine.length-1)+"\n";
             valueLine = valueLine.substring(0,valueLine.length-1)+"\n";
             stringToShow += keyLine+valueLine;
         }
-        if(box[stateObject.oneSelectedBox].data!==null){
+        if(box[stateObject.oneSelectedBox].data[0]!==null){
             stringToShow += "DATA:\n";
-            console.log(getDetailedType(box[stateObject.oneSelectedBox].data));
-            switch(getDetailedType(box[stateObject.oneSelectedBox].data)){
-                case 'array':
-                    for(var a=0;a<box[stateObject.oneSelectedBox].data.length;a++){
-                        for(var b=0;b<box[stateObject.oneSelectedBox].data[a].length;b++){
-                            stringToShow += box[stateObject.oneSelectedBox].data[a][b]
-                            if(b<box[stateObject.oneSelectedBox].data[a].length-1){
+            switch(getDetailedType(box[stateObject.oneSelectedBox].data[0])){
+                case 'array1D':
+                    for(var a=0;a<box[stateObject.oneSelectedBox].data[0].length;a++){
+                        stringToShow += box[stateObject.oneSelectedBox].data[0][a]
+                        if(a<box[stateObject.oneSelectedBox].data[0].length-1){
+                            stringToShow += ",";
+                        }
+                    }
+                    stringToShow += "\n";
+                    break;
+                case 'array2D':
+                    for(var a=0;a<box[stateObject.oneSelectedBox].data[0].length;a++){
+                        for(var b=0;b<box[stateObject.oneSelectedBox].data[0][a].length;b++){
+                            stringToShow += box[stateObject.oneSelectedBox].data[0][a][b]
+                            if(b<box[stateObject.oneSelectedBox].data[0][a].length-1){
                                 stringToShow += ",";
                             }
                         }
@@ -450,7 +533,7 @@ function updateTxtIn(stateObject){
                     }
                     break;
                 case 'number':
-                    stringToShow += box[stateObject.oneSelectedBox].data;
+                    stringToShow += box[stateObject.oneSelectedBox].data[0];
                     break;
             }
             
@@ -535,17 +618,26 @@ var menuHierarchy = {"main":["data","math","distribution","matrix","sieve","conv
 "conversion":[],
 "userProcess":[]};
 var boxDefault = {
-    "beta":{columns:3,rows:3,alpha:1,beta:1},
-    "data":{},
-    "fill":{columns:3,rows:3,fillValue:1},
-    "gaussian":{columns:3,rows:3,mean:0,standardDeviation:1},
-    "hadamardMultiply":{firstFactor:0,secondFactor:0},
-    "identity":{columns:3,rows:3},
-    "plus":{firstAddend:2,secondAddend:2},
-    "sieve":{sieveIn:"10010"},
-    "uniform":{columns:3,rows:3,lowerBound:0,upperBound:1},
-    "zero":{columns:3,rows:3}
-};
+    parameterName:{"beta":["columns","rows","alpha","beta"],
+    "data":[],
+    "fill":["columns","rows","fillValue"],
+    "gaussian":["columns","rows","mean","standardDeviation"],
+    "hadamardMultiply":["firstFactor","secondFactor"],
+    "identity":["columns","rows"],
+    "plus":["firstAddend","secondAddend"],
+    "sieve":["sieveIn"],
+    "uniform":["columns","rows","lowerBound","upperBound"],
+    "zero":["columns","rows"]},
+    parameterValue:{"beta":[3,3,1,1],
+    "data":[],
+    "fill":[3,3,1],
+    "gaussian":[3,3,0,1],
+    "hadamardMultiply":[0,0],
+    "identity":[3,3],
+    "plus":[2,2],
+    "sieve":["10010"],
+    "uniform":[3,3,0,1],
+    "zero":[3,3]}};
 var box = [];
 var connection = [];
 
@@ -660,6 +752,13 @@ cnvs.addEventListener('mouseup', async (e) => {
                 }
             }
             break;
+        case "inlet":
+            switch(mouseUpResult.type){
+                case "outlet":
+                    tryToAddRemoveConnection(mouseUpResult.box,mouseUpResult.outlet,mouseDownResult.box,mouseDownResult.inlet);
+                    break;
+            }
+            break;
         case "mainMenu":
             if(mouseDownResult.detail!=menuHierarchy["main"].length-1){
                 programState.submenu = menuHierarchy["main"][mouseDownResult.detail];
@@ -672,22 +771,7 @@ cnvs.addEventListener('mouseup', async (e) => {
         case "outlet":
             switch(mouseUpResult.type){
                 case "inlet":
-                    var matchingConnection = connection.findIndex(conn => conn.from.box === mouseDownResult.box && conn.to.box === mouseUpResult.box && conn.from.outlet === mouseDownResult.outlet && conn.to.inlet === mouseUpResult.inlet);
-                    if(matchingConnection>-1){
-                        box[mouseUpResult.to.box].parameterSource[mouseUpResult.inlet] = {kind:"specified"};
-                        box[mouseUpResult.to.box].parameter[mouseUpResult.inlet] = Object.values(boxDefault[box[mouseUpResult.to.box].kind])[mouseUpResult.to.inlet];
-                        connection.splice(matchingConnection,1);
-                    }
-                    else{
-                        connection.push({from:{box:mouseDownResult.box,outlet:mouseDownResult.outlet},to:{box:mouseUpResult.box,inlet:mouseUpResult.inlet}});
-                    }
-                    if(!isDirectedAcyclicGraphBoxConnection(box,connection)){
-                        connection.pop()
-                    }
-                    else{
-                        box[mouseUpResult.to.box].parameterSource[mouseUpResult.inlet] = {kind:"derived",from:{box:mouseDownResult.from.box,outlet:mouseDownResult.from.outlet}};
-                    };
-                    programState.latestTopologicalSort = topologicalSort(box,connection);
+                    tryToAddRemoveConnection(mouseDownResult.box,mouseDownResult.outlet,mouseUpResult.box,mouseUpResult.inlet);
                     break;
             }
             break;
