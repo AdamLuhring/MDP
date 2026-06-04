@@ -231,6 +231,60 @@ function tryToAddRemoveConnection(fromBox,fromOutlet,toBox,toInlet){
     programState.latestTopologicalSort = topologicalSort(box,connection);
     calculateWholeGraph();
 }
+function isTextInputValid(text, parameterNames, dataSignature) {
+    const lines = text.trim().split('\n');
+    let lineIndex = 0;
+    if (lines[lineIndex]!=="PARAMETERS:") {
+        return false;
+    }
+    lineIndex++;
+    const expectedParamLine = parameterNames.join(';');
+    if (lines[lineIndex] !== expectedParamLine) {
+        return false;
+    }
+    lineIndex++;
+    const paramValues = lines[lineIndex].split(';');
+    if (paramValues.length !== parameterNames.length) {
+        return false;
+    }
+    lineIndex++;
+    if (lines[lineIndex] !== "DATA:") {
+        return false;
+    }
+    lineIndex++;
+    const dataLines = lines.slice(lineIndex);
+    for (let i = 0; i < dataLines.length; i++) {
+        const line = dataLines[i].trim();
+        if (line === "") continue;
+        const values = line.split(',');
+        if (values.length !== dataSignature.length) {
+            return false;
+        }
+        let rowValid = true;
+        for (let j = 0; j < dataSignature.length; j++) {
+            const type = dataSignature[j];
+            const value = values[j].trim();
+            switch(type) {
+                case 'string':
+                    break;
+                case 'float':
+                    const floatVal = parseFloat(value);
+                    if (isNaN(floatVal)) {
+                        return false;
+                    }
+                    break;
+                case 'integer':
+                case 'int':
+                    const intVal = parseInt(value, 10);
+                    if (isNaN(intVal) || !/^-?\d+$/.test(value)) {
+                        return false;
+                    }
+                    break;
+            }
+        }
+    }
+    return true;
+}
 function calculateWholeGraph(){
     programState.latestTopologicalSort.forEach(boxIndex => {
         // Iterate through parameterSource indices
@@ -250,6 +304,9 @@ function calculateWholeGraph(){
 class Box{
     generateDataFromParameters(){
         switch(this.kind){
+            case "data":
+                this.data = [[1,2,3],[4,5,6],[7,8,9]];
+                break;
             case "fill":
                 this.data = [];
                 for(var fillRow=0;fillRow<this.parameterValue[1];fillRow++){
@@ -281,7 +338,30 @@ class Box{
                 }
                 break;
             case "plus":
-                this.data = this.parameterValue[0]+this.parameterValue[1];
+                var firstAddendType = getDetailedType(this.parameterValue[0]);
+                var secondAddendType = getDetailedType(this.parameterValue[1]);
+                switch(firstAddendType){
+                    case "number":
+                        switch(secondAddendType){
+                            case "number":
+                                this.data = this.parameterValue[0]+this.parameterValue[1];
+                                break;
+                        }
+                        break;
+                    case "array2D":
+                        switch(secondAddendType){
+                            case "array2D":
+                                this.data = [];
+                                for(var a=0;a<this.parameterValue[0].length;a++){
+                                    this.data[a] = [];
+                                    for(var b=0;b<this.parameterValue[0][a].length;b++){
+                                        this.data[a][b] = this.parameterValue[0][a][b]+this.parameterValue[1][a][b];
+                                    }
+                                }
+                                break;
+                        }
+                        break;
+                }
                 break;
             case "uniform":
                 var range = this.parameterValue[3]-this.parameterValue[2];
@@ -505,8 +585,8 @@ function updateTxtIn(stateObject){
             var keyLine = "";
             var valueLine = "";
             for(var a=0;a<box[stateObject.oneSelectedBox].parameterName.length;a++){
-                keyLine += box[stateObject.oneSelectedBox].parameterName[a]+",";
-                valueLine += box[stateObject.oneSelectedBox].parameterValue[a]+",";
+                keyLine += box[stateObject.oneSelectedBox].parameterName[a]+";";
+                valueLine += box[stateObject.oneSelectedBox].parameterValue[a]+";";
             }
             keyLine = keyLine.substring(0,keyLine.length-1)+"\n";
             valueLine = valueLine.substring(0,valueLine.length-1)+"\n";
@@ -870,17 +950,8 @@ cnvs.addEventListener('keydown', (e) => {
 });
 txtIn.addEventListener('keydown', (e) => {
     if((e.code==="Enter")&&(e.ctrlKey)){
-        var valid = true;
-        var lines = txtIn.value.split("\n");
-        for(var a=0;a<lines.length;a++){
-            lines[a] = lines[a].split(",");
-            for(var b=0;b<lines[a].length;b++){
-                if(isNaN(lines[a][b])){
-                    valid = false;
-                }
-            }
-        }
-        if(valid){
+        var signature = new Array(box[programState.oneSelectedBox].data[0].length).fill("string");
+        if(isTextInputValid(txtIn.value,box[programState.oneSelectedBox].parameterName,signature)){
             txtIn.style = "background-color:#ABDCAB";
         }
         else{
