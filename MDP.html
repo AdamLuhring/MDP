@@ -216,18 +216,18 @@ function tryToAddRemoveConnection(fromBox,fromOutlet,toBox,toInlet){
     var matchingConnection = connection.findIndex(conn => conn.from.box === fromBox && conn.to.box === toBox && conn.from.outlet === fromOutlet && conn.to.inlet === toInlet);
     if(matchingConnection>-1){
         box[toBox].parameterSource[toInlet] = {kind:"specified"};
-        box[toBox].parameterValue[toInlet] = boxDefault.parameterValue[box[toBox].kind][toInlet];
+        box[toBox].parameterValue[toInlet] = structuredClone(boxDefault.parameterValue[box[toBox].kind][toInlet]);
         connection.splice(matchingConnection,1);
     }
     else{
         connection.push({from:{box:fromBox,outlet:fromOutlet},to:{box:toBox,inlet:toInlet}});
+        if(!isDirectedAcyclicGraphBoxConnection(box,connection)){
+            connection.pop()
+        }
+        else{
+            box[toBox].parameterSource[toInlet] = {kind:"derived",from:{box:fromBox,outlet:fromOutlet}};
+        };
     }
-    if(!isDirectedAcyclicGraphBoxConnection(box,connection)){
-        connection.pop()
-    }
-    else{
-        box[toBox].parameterSource[toInlet] = {kind:"derived",from:{box:fromBox,outlet:fromOutlet}};
-    };
     programState.latestTopologicalSort = topologicalSort(box,connection);
     calculateWholeGraph();
 }
@@ -291,7 +291,6 @@ function calculateWholeGraph(){
         for (let inletIdx = 0; inletIdx < box[boxIndex].parameterSource.length; inletIdx++) {
             const src = box[boxIndex].parameterSource[inletIdx];
             if (src.kind === "derived") {
-                console.log(`Box ${boxIndex} inlet ${inletIdx} gets from box ${src.from.box} outlet ${src.from.outlet}`);
                 // Make sure the source box has data at that outlet
                 if (box[src.from.box] && box[src.from.box].data && box[src.from.box].data[src.from.outlet] !== undefined) {
                     box[boxIndex].parameterValue[inletIdx] = structuredClone(box[src.from.box].data[src.from.outlet]);
@@ -427,6 +426,7 @@ function processToIcon(processIn){
     switch(processIn){
         case "balance": return "\u2696";
         case "beta": return "\u{3B2}";
+        case "connection": return "\u{1F73A}";
         case "conversion": return "\u33A0";
         case "convolution": return "\u2605";
         case "data": return "\u2637";
@@ -586,7 +586,14 @@ function updateTxtIn(stateObject){
             var valueLine = "";
             for(var a=0;a<box[stateObject.oneSelectedBox].parameterName.length;a++){
                 keyLine += box[stateObject.oneSelectedBox].parameterName[a]+";";
-                valueLine += box[stateObject.oneSelectedBox].parameterValue[a]+";";
+                if(box[stateObject.oneSelectedBox].parameterSource[a].kind==="derived"){
+                    valueLine += "[";
+                }
+                valueLine += box[stateObject.oneSelectedBox].parameterValue[a];
+                if(box[stateObject.oneSelectedBox].parameterSource[a].kind==="derived"){
+                    valueLine += "]";
+                }
+                valueLine += ";";
             }
             keyLine = keyLine.substring(0,keyLine.length-1)+"\n";
             valueLine = valueLine.substring(0,valueLine.length-1)+"\n";
