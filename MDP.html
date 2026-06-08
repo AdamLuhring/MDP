@@ -395,6 +395,7 @@ class Box{
         this.x = x;
         this.y = y;
         this.kind = kind;
+        this.subgraph = null;
         this.selected = false;
         this.parameterName = structuredClone(boxDefault.parameterName[this.kind]);
         this.parameterValue = structuredClone(boxDefault.parameterValue[this.kind]);
@@ -417,6 +418,19 @@ class Box{
         this.outletDivide = [];
         this.outletCenter = [programState.screenDim.halfTile];
         this.generateDataFromParameters();
+    }
+}
+class Graph{
+    randomSymbol(){
+        this.symbol = String.fromCodePoint(Math.floor(Math.random()*65536));
+    }
+    constructor(name) {
+        this.name = name;
+        this.symbol = String.fromCodePoint(Math.floor(Math.random()*65536));
+        this.nodes = [];
+        this.connections = [];
+        this.inputPorts = [];
+        this.outputPorts = [];
     }
 }
 function isInRectangle(xTest,yTest,xBoundA,yBoundA,xBoundB,yBoundB){
@@ -578,19 +592,20 @@ function redraw(stateObject){
     }
 }
 function updateTxtIn(stateObject){
-    if(stateObject.selectedBoxNum===1){
+    if(stateObject.selectedBoxes.size===1){
         var stringToShow = "";
-        if(box[stateObject.oneSelectedBox].parameterName!==null){
+        var theOne = stateObject.selectedBoxes.values().next().value;
+        if(box[theOne].parameterName!==null){
             stringToShow += "PARAMETERS:\n";
             var keyLine = "";
             var valueLine = "";
-            for(var a=0;a<box[stateObject.oneSelectedBox].parameterName.length;a++){
-                keyLine += box[stateObject.oneSelectedBox].parameterName[a]+";";
-                if(box[stateObject.oneSelectedBox].parameterSource[a].kind==="derived"){
+            for(var a=0;a<box[theOne].parameterName.length;a++){
+                keyLine += box[theOne].parameterName[a]+";";
+                if(box[theOne].parameterSource[a].kind==="derived"){
                     valueLine += "[";
                 }
-                valueLine += box[stateObject.oneSelectedBox].parameterValue[a];
-                if(box[stateObject.oneSelectedBox].parameterSource[a].kind==="derived"){
+                valueLine += box[theOne].parameterValue[a];
+                if(box[theOne].parameterSource[a].kind==="derived"){
                     valueLine += "]";
                 }
                 valueLine += ";";
@@ -599,23 +614,23 @@ function updateTxtIn(stateObject){
             valueLine = valueLine.substring(0,valueLine.length-1)+"\n";
             stringToShow += keyLine+valueLine;
         }
-        if(box[stateObject.oneSelectedBox].data[0]!==null){
+        if(box[theOne].data[0]!==null){
             stringToShow += "DATA:\n";
-            switch(getDetailedType(box[stateObject.oneSelectedBox].data[0])){
+            switch(getDetailedType(box[theOne].data[0])){
                 case 'array1D':
-                    for(var a=0;a<box[stateObject.oneSelectedBox].data[0].length;a++){
-                        stringToShow += box[stateObject.oneSelectedBox].data[0][a]
-                        if(a<box[stateObject.oneSelectedBox].data[0].length-1){
+                    for(var a=0;a<box[theOne].data[0].length;a++){
+                        stringToShow += box[theOne].data[0][a]
+                        if(a<box[theOne].data[0].length-1){
                             stringToShow += ",";
                         }
                     }
                     stringToShow += "\n";
                     break;
                 case 'array2D':
-                    for(var a=0;a<box[stateObject.oneSelectedBox].data[0].length;a++){
-                        for(var b=0;b<box[stateObject.oneSelectedBox].data[0][a].length;b++){
-                            stringToShow += box[stateObject.oneSelectedBox].data[0][a][b]
-                            if(b<box[stateObject.oneSelectedBox].data[0][a].length-1){
+                    for(var a=0;a<box[theOne].data[0].length;a++){
+                        for(var b=0;b<box[theOne].data[0][a].length;b++){
+                            stringToShow += box[theOne].data[0][a][b]
+                            if(b<box[theOne].data[0][a].length-1){
                                 stringToShow += ",";
                             }
                         }
@@ -623,7 +638,7 @@ function updateTxtIn(stateObject){
                     }
                     break;
                 case 'number':
-                    stringToShow += box[stateObject.oneSelectedBox].data[0];
+                    stringToShow += box[theOne].data[0];
                     break;
             }
             
@@ -694,7 +709,7 @@ const mdtRepresentation = {"pitch":["midiNote","noteNameOctave"],"pitchClass":["
 //Add: Current screen, saved settings, current data/process
 var programState = {screen:"nodeEditor",submenu:"none",subprocess:"none",
     screenDim:{width:cnvs.width,height:cnvs.height,menuTile:(cnvs.width/20),xletWidth:8},
-    selectedBoxNum:0,oneSelectedBox:-1,
+    selectedBoxes:new Set(),
     canvasClipboard:{content:[],x:0,y:0,relativePosition:[],nthCopy:0},
     dragFrom:{x:-1,y:-1},
     latestTopologicalSort:[]};
@@ -758,22 +773,19 @@ cnvs.addEventListener('mouseup', async (e) => {
                         if(e.shiftKey){
                             box[mouseUpResult.box].selected = !box[mouseUpResult.box].selected;
                             if(box[mouseUpResult.box].selected){
-                                programState.selectedBoxNum += 1;
+                                programState.selectedBoxes.add(mouseUpResult.box);
                             }
                             else{
-                                programState.selectedBoxNum -= 1;
-                            }
-                            if(programState.selectedBoxNum==1){
-                                programState.oneSelectedBox = mouseUpResult.box;
+                                programState.selectedBoxes.delete(mouseUpResult.box);
                             }
                         }
                         else{
                             for(var a=0;a<box.length;a++){
                                 box[a].selected = false;
                             }
+                            programState.selectedBoxes.clear();
                             box[mouseUpResult.box].selected = true;
-                            programState.selectedBoxNum = 1;
-                            programState.oneSelectedBox = mouseUpResult.box;
+                            programState.selectedBoxes.add(mouseUpResult.box);
                         }
                     }
                     else{
@@ -788,9 +800,10 @@ cnvs.addEventListener('mouseup', async (e) => {
                     }
                     break;
                 case "background":
-                    if(programState.oneSelectedBox!=-1){
-                        box[programState.oneSelectedBox].x += mouseX-programState.dragFrom.x;
-                        box[programState.oneSelectedBox].y += mouseY-programState.dragFrom.y;
+                    if(programState.selectedBoxes.size===1){
+                        var theOne = programState.selectedBoxes.values().next().value;
+                        box[theOne].x += mouseX-programState.dragFrom.x;
+                        box[theOne].y += mouseY-programState.dragFrom.y;
                     }
                     else{
                         //Should only do this moving if the original click was on one of the selected boxes
@@ -820,19 +833,15 @@ cnvs.addEventListener('mouseup', async (e) => {
                     for(var a=0;a<box.length;a++){
                         box[a].selected = false;
                     }
-                    programState.selectedBoxNum = 0;
+                    programState.selectedBoxes.clear();
                 }
                 for(var a=0;a<box.length;a++){
                     if(isInRectangle(box[a].x,box[a].y,programState.dragFrom.x,programState.dragFrom.y,mouseX,mouseY)){
                         if(!box[a].selected){
                             box[a].selected = true;
-                            programState.selectedBoxNum += 1;
-                            programState.oneSelectedBox = a;
+                            programState.selectedBoxes.add(a);
                         }
                     }
-                }
-                if(programState.selectedBoxNum!==1){
-                    programState.oneSelectedBox = -1;
                 }
             }
             else{
@@ -895,7 +904,7 @@ cnvs.addEventListener('mouseup', async (e) => {
 cnvs.addEventListener('keydown', (e) => {
     e.preventDefault();
     if(((e.key==="c")||(e.key==="x"))&&(e.ctrlKey)){
-        if(programState.selectedBoxNum>0){
+        if(programState.selectedBoxes.size>0){
             programState.canvasClipboard.nthCopy = 0;
             programState.canvasClipboard.content = [];
             programState.canvasClipboard.x = programState.screenDim.width;
@@ -943,6 +952,9 @@ cnvs.addEventListener('keydown', (e) => {
             redraw(programState);
         }
     }
+    if((e.key==="g")&&(e.ctrlKey)){
+
+    }
     if(e.key==="Tab"){
         switch(programState.screen){
             case "nodeEditor":
@@ -956,9 +968,10 @@ cnvs.addEventListener('keydown', (e) => {
     }
 });
 txtIn.addEventListener('keydown', (e) => {
+    var theOne = programState.selectedBoxes.values().next.value;
     if((e.code==="Enter")&&(e.ctrlKey)){
-        var signature = new Array(box[programState.oneSelectedBox].data[0].length).fill("string");
-        if(isTextInputValid(txtIn.value,box[programState.oneSelectedBox].parameterName,signature)){
+        var signature = new Array(box[theOne].data[0].length).fill("string");
+        if(isTextInputValid(txtIn.value,box[theOne].parameterName,signature)){
             txtIn.style = "background-color:#ABDCAB";
         }
         else{
