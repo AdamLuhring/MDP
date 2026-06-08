@@ -426,11 +426,11 @@ class Graph{
     }
     constructor(name) {
         this.name = name;
-        this.symbol = String.fromCodePoint(Math.floor(Math.random()*65536));
         this.nodes = [];
         this.connections = [];
         this.inputPorts = [];
         this.outputPorts = [];
+        this.randomSymbol();
     }
 }
 function isInRectangle(xTest,yTest,xBoundA,yBoundA,xBoundB,yBoundB){
@@ -712,7 +712,8 @@ var programState = {screen:"nodeEditor",submenu:"none",subprocess:"none",
     selectedBoxes:new Set(),
     canvasClipboard:{content:[],x:0,y:0,relativePosition:[],nthCopy:0},
     dragFrom:{x:-1,y:-1},
-    latestTopologicalSort:[]};
+    latestTopologicalSort:[],
+    graphRegistry:new Map(),nextGraphID:1};
 programState.screenDim.halfTile = programState.screenDim.menuTile/2;
 var menuHierarchy = {"main":["data","math","distribution","matrix","sieve","conversion","userProcess","x"],
 "data":["data"],
@@ -953,7 +954,9 @@ cnvs.addEventListener('keydown', (e) => {
         }
     }
     if((e.key==="g")&&(e.ctrlKey)){
-
+        programState.graphRegistry.set(programState.nextGraphID,new Graph(programState.nextGraphID));
+        programState.nextGraphID++;
+        console.log(JSON.stringify(Object.fromEntries(programState.graphRegistry)));
     }
     if(e.key==="Tab"){
         switch(programState.screen){
@@ -979,7 +982,6 @@ txtIn.addEventListener('keydown', (e) => {
         }
     }
 });
-
 var db = new alasql.Database('mybase');
 db.exec('CREATE TABLE testData (midiNote INT, beat INT, duration INT)');
 db.exec('INSERT INTO testData (2,5,1)');
