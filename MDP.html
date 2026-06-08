@@ -213,6 +213,8 @@ function isDirectedAcyclicGraphBoxConnection(boxes, connections) {
     return true;
 }
 function tryToAddRemoveConnection(fromBox,fromOutlet,toBox,toInlet){
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     var matchingConnection = connection.findIndex(conn => conn.from.box === fromBox && conn.to.box === toBox && conn.from.outlet === fromOutlet && conn.to.inlet === toInlet);
     if(matchingConnection>-1){
         box[toBox].parameterSource[toInlet] = {kind:"specified"};
@@ -286,6 +288,8 @@ function isTextInputValid(text, parameterNames, dataSignature) {
     return true;
 }
 function calculateWholeGraph(){
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     programState.latestTopologicalSort.forEach(boxIndex => {
         // Iterate through parameterSource indices
         for (let inletIdx = 0; inletIdx < box[boxIndex].parameterSource.length; inletIdx++) {
@@ -424,10 +428,11 @@ class Graph{
     randomSymbol(){
         this.symbol = String.fromCodePoint(Math.floor(Math.random()*65536));
     }
-    constructor(name) {
+    constructor(id,name) {
+        this.id = id;
         this.name = name;
-        this.nodes = [];
-        this.connections = [];
+        this.box = [];
+        this.connection = [];
         this.inputPorts = [];
         this.outputPorts = [];
         this.randomSymbol();
@@ -487,7 +492,9 @@ function drawBraceletEditor(stateObject){
     ctx.arc(cnvs.width/2,cnvs.height/2,100,0,TAU);
     ctx.stroke();
 }
-function drawNodeEditor(stateObject){
+function drawBoxEditor(stateObject){
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     clearCanvas();
     const menuTileNum = 20;
     var menuTileSize = cnvs.clientWidth/menuTileNum;
@@ -582,9 +589,9 @@ function drawNodeEditor(stateObject){
 }
 function redraw(stateObject){
     clearCanvas();
-    switch(stateObject.screen){
-        case "nodeEditor":
-            drawNodeEditor(stateObject);
+    switch(stateObject.screenMode){
+        case "boxEditor":
+            drawBoxEditor(stateObject);
             break;
         case "braceletEditor":
             drawBraceletEditor(stateObject);
@@ -592,6 +599,8 @@ function redraw(stateObject){
     }
 }
 function updateTxtIn(stateObject){
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     if(stateObject.selectedBoxes.size===1){
         var stringToShow = "";
         var theOne = stateObject.selectedBoxes.values().next().value;
@@ -656,7 +665,9 @@ function updateTxtOut(stateObject){
     }
     txtOut.value = outString;
 }
-function interpretMouseCoordinate(mX,mY){
+function interpretMouseCoordinateForBoxEditor(mX,mY){
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     if(mY<programState.screenDim.menuTile){
         var whichSquare = Math.floor(mX/programState.screenDim.menuTile);
         if(whichSquare<menuHierarchy["main"].length){
@@ -688,84 +699,13 @@ function interpretMouseCoordinate(mX,mY){
     }
     return {type:"background"};
 }
-const cnvs = document.getElementById("theCanvas");
-cnvs.width = cnvs.getBoundingClientRect().width;
-cnvs.height = cnvs.getBoundingClientRect().height;
-cnvs.setAttribute('tabindex',0);
-const ctx = cnvs.getContext("2d");
-const txtIn = document.getElementById("theTextInput");
-const txtOut = document.getElementById("theTextOutput");
-// Musical data types
-// Timepoints and durations can use common formats, just interpreted differently
-// Index is for index within set, sieve, etc.
-const mdUnit = new Set(["pitch","pitchClass","frequency","interval","time","beat","index"]);
-// absolute is for timepoints, absolute pitch
-// relativeOnLine is for durations, frequency differences
-// relativeInCircle is for difference within pitchClassSet, sieve
-const mdRelativity = new Set(["absolute","relativeOnLine","relativeInCircle"]);
-const mdDomain = new Set(["float","integer","binary","set","rational"]);
-const mdtRepresentation = {"pitch":["midiNote","noteNameOctave"],"pitchClass":["modulus","noteName"]};
-
-//Add: Current screen, saved settings, current data/process
-var programState = {screen:"nodeEditor",submenu:"none",subprocess:"none",
-    screenDim:{width:cnvs.width,height:cnvs.height,menuTile:(cnvs.width/20),xletWidth:8},
-    selectedBoxes:new Set(),
-    canvasClipboard:{content:[],x:0,y:0,relativePosition:[],nthCopy:0},
-    dragFrom:{x:-1,y:-1},
-    latestTopologicalSort:[],
-    graphRegistry:new Map(),nextGraphID:1};
-programState.screenDim.halfTile = programState.screenDim.menuTile/2;
-var menuHierarchy = {"main":["data","math","distribution","matrix","sieve","conversion","userProcess","x"],
-"data":["data"],
-"math":["plus","hadamardMultiply"],
-"distribution":["beta","gaussian","uniform"],
-"matrix":["fill","identity","zero"],
-"sieve":["sieve"],
-"conversion":[],
-"userProcess":[]};
-var boxDefault = {
-    parameterName:{"beta":["columns","rows","alpha","beta"],
-    "data":[],
-    "fill":["columns","rows","fillValue"],
-    "gaussian":["columns","rows","mean","standardDeviation"],
-    "hadamardMultiply":["firstFactor","secondFactor"],
-    "identity":["columns","rows"],
-    "plus":["firstAddend","secondAddend"],
-    "sieve":["sieveIn"],
-    "uniform":["columns","rows","lowerBound","upperBound"],
-    "zero":["columns","rows"]},
-    parameterValue:{"beta":[3,3,1,1],
-    "data":[],
-    "fill":[3,3,1],
-    "gaussian":[3,3,0,1],
-    "hadamardMultiply":[0,0],
-    "identity":[3,3],
-    "plus":[2,2],
-    "sieve":["10010"],
-    "uniform":[3,3,0,1],
-    "zero":[3,3]}};
-var box = [];
-var connection = [];
-
-var synth;
-var whichClick = 0;
-cnvs.addEventListener('mousedown', (e) => {
-    programState.dragFrom.x = e.clientX-cnvs.offsetLeft;
-    programState.dragFrom.y = e.clientY-cnvs.offsetTop;
-});
-cnvs.addEventListener('mouseup', async (e) => {
-    var mouseDownOn = -1;
-    for(var a=0;a<box.length;a++){
-        if((Math.abs(programState.dragFrom.x-box[a].x)<programState.screenDim.menuTile/2)&&(Math.abs(programState.dragFrom.y-box[a].y)<programState.screenDim.menuTile/2)){
-            mouseDownOn = a;
-        }
-    }
-    var needToRedraw = false;
-    var foundActionForClick = false;
+function handleBoxEditorMouseUp(e){
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     var mouseX = e.clientX-cnvs.offsetLeft;
     var mouseY = e.clientY-cnvs.offsetTop;
-    var mouseDownResult = interpretMouseCoordinate(programState.dragFrom.x,programState.dragFrom.y);
-    var mouseUpResult = interpretMouseCoordinate(mouseX,mouseY);
+    var mouseDownResult = interpretMouseCoordinateForBoxEditor(programState.dragFrom.x,programState.dragFrom.y);
+    var mouseUpResult = interpretMouseCoordinateForBoxEditor(mouseX,mouseY);
     switch(mouseDownResult.type){
         case "boxBody":
             switch(mouseUpResult.type){
@@ -884,6 +824,78 @@ cnvs.addEventListener('mouseup', async (e) => {
             }
             break;
     }
+}
+const cnvs = document.getElementById("theCanvas");
+cnvs.width = cnvs.getBoundingClientRect().width;
+cnvs.height = cnvs.getBoundingClientRect().height;
+cnvs.setAttribute('tabindex',0);
+const ctx = cnvs.getContext("2d");
+const txtIn = document.getElementById("theTextInput");
+const txtOut = document.getElementById("theTextOutput");
+// Musical data types
+// Timepoints and durations can use common formats, just interpreted differently
+// Index is for index within set, sieve, etc.
+const mdUnit = new Set(["pitch","pitchClass","frequency","interval","time","beat","index"]);
+// absolute is for timepoints, absolute pitch
+// relativeOnLine is for durations, frequency differences
+// relativeInCircle is for difference within pitchClassSet, sieve
+const mdRelativity = new Set(["absolute","relativeOnLine","relativeInCircle"]);
+const mdDomain = new Set(["float","integer","binary","set","rational"]);
+const mdtRepresentation = {"pitch":["midiNote","noteNameOctave"],"pitchClass":["modulus","noteName"]};
+
+//Add: Current screen, saved settings, current data/process
+var programState = {screenMode:"boxEditor",submenu:"none",subprocess:"none",
+    screenDim:{width:cnvs.width,height:cnvs.height,menuTile:(cnvs.width/20),xletWidth:8},
+    selectedBoxes:new Set(),
+    canvasClipboard:{content:[],x:0,y:0,relativePosition:[],nthCopy:0},
+    dragFrom:{x:-1,y:-1},
+    latestTopologicalSort:[],
+    graphRegistry:new Map(),nextGraphID:1,
+    graphToDisplay:0};
+programState.screenDim.halfTile = programState.screenDim.menuTile/2;
+programState.graphRegistry.set(0,new Graph(0,"baseGraph"));
+var menuHierarchy = {"main":["data","math","distribution","matrix","sieve","conversion","userProcess","x"],
+"data":["data"],
+"math":["plus","hadamardMultiply"],
+"distribution":["beta","gaussian","uniform"],
+"matrix":["fill","identity","zero"],
+"sieve":["sieve"],
+"conversion":[],
+"userProcess":[]};
+var boxDefault = {
+    parameterName:{"beta":["columns","rows","alpha","beta"],
+    "data":[],
+    "fill":["columns","rows","fillValue"],
+    "gaussian":["columns","rows","mean","standardDeviation"],
+    "hadamardMultiply":["firstFactor","secondFactor"],
+    "identity":["columns","rows"],
+    "plus":["firstAddend","secondAddend"],
+    "sieve":["sieveIn"],
+    "uniform":["columns","rows","lowerBound","upperBound"],
+    "zero":["columns","rows"]},
+    parameterValue:{"beta":[3,3,1,1],
+    "data":[],
+    "fill":[3,3,1],
+    "gaussian":[3,3,0,1],
+    "hadamardMultiply":[0,0],
+    "identity":[3,3],
+    "plus":[2,2],
+    "sieve":["10010"],
+    "uniform":[3,3,0,1],
+    "zero":[3,3]}};
+
+var synth;
+var whichClick = 0;
+cnvs.addEventListener('mousedown', (e) => {
+    programState.dragFrom.x = e.clientX-cnvs.offsetLeft;
+    programState.dragFrom.y = e.clientY-cnvs.offsetTop;
+});
+cnvs.addEventListener('mouseup', async (e) => {
+    switch(programState.screenMode){
+        case "boxEditor":
+            handleBoxEditorMouseUp(e);
+            break;
+    }
     /*if(whichClick===0){
         await Tone.start();
         var synth = new Tone.Synth().toDestination();
@@ -903,6 +915,8 @@ cnvs.addEventListener('mouseup', async (e) => {
     updateTxtOut(programState);
 });
 cnvs.addEventListener('keydown', (e) => {
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     e.preventDefault();
     if(((e.key==="c")||(e.key==="x"))&&(e.ctrlKey)){
         if(programState.selectedBoxes.size>0){
@@ -956,21 +970,22 @@ cnvs.addEventListener('keydown', (e) => {
     if((e.key==="g")&&(e.ctrlKey)){
         programState.graphRegistry.set(programState.nextGraphID,new Graph(programState.nextGraphID));
         programState.nextGraphID++;
-        console.log(JSON.stringify(Object.fromEntries(programState.graphRegistry)));
     }
     if(e.key==="Tab"){
-        switch(programState.screen){
-            case "nodeEditor":
-                programState.screen = "braceletEditor";
+        switch(programState.screenMode){
+            case "boxEditor":
+                programState.screenMode = "braceletEditor";
                 break;
             case "braceletEditor":
-                programState.screen = "nodeEditor";
+                programState.screenMode = "boxEditor";
                 break;
         }
         redraw(programState);
     }
 });
 txtIn.addEventListener('keydown', (e) => {
+    const box = programState.graphRegistry.get(programState.graphToDisplay).box;
+    const connection = programState.graphRegistry.get(programState.graphToDisplay).connection;
     var theOne = programState.selectedBoxes.values().next.value;
     if((e.code==="Enter")&&(e.ctrlKey)){
         var signature = new Array(box[theOne].data[0].length).fill("string");
