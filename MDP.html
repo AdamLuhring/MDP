@@ -386,9 +386,9 @@ class Box{
                 }
                 break;
             default:
+                this.parameterName = null;
                 this.parameterValue = null;
-                this.label = null;
-                this.data = null;
+                this.data = [0];
                 break;
         }
         //This is for the temporary state of affairs that every box happens to have one outlet
@@ -414,11 +414,14 @@ class Box{
             for(var z=0;z<this.inletCount;z++){
                 this.parameterSource[z] = {kind:"specified"};
             }
-            this.generateDataFromParameters();
         }
         else{
+            this.parameterName = null;
+            this.parameterValue = null;
+            this.parameterSource = [];
             this.inletCount = programState.graphRegistry.get(this.kind).inputPorts.length;
         }
+        this.generateDataFromParameters();
         var inletHeight = programState.screenDim.menuTile/this.inletCount;
         var halfInletHeight = inletHeight/2;
         for(var z=0;z<this.inletCount;z++){
@@ -966,18 +969,23 @@ cnvs.addEventListener('keydown', (e) => {
         }
     }
     if((e.key==="g")&&(e.ctrlKey)){
-        programState.graphRegistry.set(programState.nextGraphID,new Graph(programState.nextGraphID,`user${programState.nextGraphID}`));
+        programState.graphRegistry.set(programState.nextGraphID, new Graph(programState.nextGraphID, `user${programState.nextGraphID}`));
         var visibleGraph = programState.graphRegistry.get(programState.graphToDisplay);
         var graphBeingDefined = programState.graphRegistry.get(programState.nextGraphID);
         var boxTranslate = new Map();
+        
         programState.selectedBoxes.forEach((val) => {
             var referencedBox = visibleGraph.box[val];
-            boxTranslate.set(val,graphBeingDefined.box.length);
+            boxTranslate.set(val, graphBeingDefined.box.length);
             graphBeingDefined.box.push(structuredClone(referencedBox));
         });
+        
         visibleGraph.connection.forEach(conn => {
             if(programState.selectedBoxes.has(conn.from.box) && programState.selectedBoxes.has(conn.to.box)){
-                graphBeingDefined.connection.push({from:{box:boxTranslate.get(conn.from.box),outlet:conn.from.outlet},to:{box:boxTranslate.get(conn.to.box),inlet:conn.to.inlet}});
+                graphBeingDefined.connection.push({
+                    from: {box: boxTranslate.get(conn.from.box), outlet: conn.from.outlet},
+                    to: {box: boxTranslate.get(conn.to.box), inlet: conn.to.inlet}
+                });
             }
             if (!programState.selectedBoxes.has(conn.from.box) && programState.selectedBoxes.has(conn.to.box)) {
                 graphBeingDefined.inputPorts.push({
@@ -994,29 +1002,96 @@ cnvs.addEventListener('keydown', (e) => {
                 });
             }
         });
-        var totalX = 0; var totalY = 0; var divisor = programState.selectedBoxes.size;
-        var selectedIndices = Array.from(programState.selectedBoxes).sort((a,b) => b - a);
+        
+        // Calculate center position
+        var totalX = 0; var totalY = 0; 
+        var selectedIndices = Array.from(programState.selectedBoxes);
         selectedIndices.forEach((val) => {
             totalX += visibleGraph.box[val].x;
             totalY += visibleGraph.box[val].y;
-            //This leaves connections independent of grouping right, but can rewire connections in/out of grouping wrongly
-            visibleGraph.connection.forEach(conn => {
-                if (conn.from.box > val) conn.from.box--;
-                if (conn.to.box > val) conn.to.box--;
-            });
-            visibleGraph.box.splice(val,1);
         });
-        visibleGraph.box.push(new Box(totalX/divisor,totalY/divisor,programState.nextGraphID));
-        visibleGraph.box[visibleGraph.box.length-1].selected = true;
+        var centerX = totalX / selectedIndices.length;
+        var centerY = totalY / selectedIndices.length;
+        
+        // Create mapping from old indices to new indices after deletion
+        var connectionTranslate = new Map();
+        var remainingIndices = [];
+        var newIndex = 0;
+        
+        // First pass: determine new indices for boxes that are NOT selected
+        for (var i = 0; i < visibleGraph.box.length; i++) {
+            if (!programState.selectedBoxes.has(i)) {
+                connectionTranslate.set(i, newIndex);
+                remainingIndices.push(i);
+                newIndex++;
+            }
+        }
+        
+        // The new graph box will be added at the end
+        var newBoxIndex = newIndex;
+        
+        // Rebuild connections with translated indices
+        var newConnections = [];
+        visibleGraph.connection.forEach(conn => {
+            const fromSelected = programState.selectedBoxes.has(conn.from.box);
+            const toSelected = programState.selectedBoxes.has(conn.to.box);
+            
+            if (!fromSelected && !toSelected) {
+                // Both ends survive - translate indices
+                newConnections.push({
+                    from: {box: connectionTranslate.get(conn.from.box), outlet: conn.from.outlet},
+                    to: {box: connectionTranslate.get(conn.to.box), inlet: conn.to.inlet}
+                });
+            } else if (!fromSelected && toSelected) {
+                // From outside to selected - becomes input to new box
+                // Need to find which input port this maps to
+                var inputPortIndex = graphBeingDefined.inputPorts.findIndex(port => 
+                    port.internalNode === boxTranslate.get(conn.to.box) && 
+                    port.internalInlet === conn.to.inlet
+                );
+                if (inputPortIndex !== -1) {
+                    newConnections.push({
+                        from: {box: connectionTranslate.get(conn.from.box), outlet: conn.from.outlet},
+                        to: {box: newBoxIndex, inlet: inputPortIndex}
+                    });
+                }
+            } else if (fromSelected && !toSelected) {
+                // From selected to outside - becomes output from new box
+                var outputPortIndex = graphBeingDefined.outputPorts.findIndex(port => 
+                    port.internalNode === boxTranslate.get(conn.from.box) && 
+                    port.internalOutlet === conn.from.outlet
+                );
+                if (outputPortIndex !== -1) {
+                    newConnections.push({
+                        from: {box: newBoxIndex, outlet: outputPortIndex},
+                        to: {box: connectionTranslate.get(conn.to.box), inlet: conn.to.inlet}
+                    });
+                }
+            }
+            // Connections where both ends are selected are discarded (internal to subgraph)
+        });
+        
+        // Build new box array (only unselected boxes + new graph box)
+        var newBoxes = [];
+        remainingIndices.forEach(oldIdx => {
+            newBoxes.push(visibleGraph.box[oldIdx]);
+        });
+        newBoxes.push(new Box(centerX, centerY, programState.nextGraphID));
+        newBoxes[newBoxes.length - 1].selected = true;
+        
+        // Replace visible graph's boxes and connections
+        visibleGraph.box = newBoxes;
+        visibleGraph.connection = newConnections;
+        
+        // Update selected boxes
         programState.selectedBoxes.clear();
-        programState.selectedBoxes.add(visibleGraph.box.length-1);
+        programState.selectedBoxes.add(newBoxIndex);
         programState.nextGraphID++;
     }
     if((e.key==="i")&&(e.ctrlKey)){
         programState.graphToDisplay = (programState.graphToDisplay+1)%programState.graphRegistry.size;
     }
     if((e.key==="r")&&(e.ctrlKey)){
-        console.log(programState.selectedBoxes.size);
         if(programState.selectedBoxes.size===1){
             var boxReference = programState.graphRegistry.get(programState.graphToDisplay).box[programState.selectedBoxes.values().next().value];
             if(typeof boxReference.kind === "number"){
