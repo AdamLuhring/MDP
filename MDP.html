@@ -401,15 +401,24 @@ class Box{
         this.kind = kind;
         this.subgraph = null;
         this.selected = false;
-        this.parameterName = structuredClone(boxDefault.parameterName[this.kind]);
-        this.parameterValue = structuredClone(boxDefault.parameterValue[this.kind]);
-        this.parameterSource = [];
-        this.inletCount = this.parameterName.length;
-        for(var z=0;z<this.inletCount;z++){
-            this.parameterSource[z] = {kind:"specified"};
-        }
         this.inletDivide = [];
         this.inletCenter = [];
+        this.outletDivide = [];
+        this.outletCenter = [programState.screenDim.halfTile];
+        this.outletCount = 1;
+        if(typeof this.kind === "string"){
+            this.parameterName = structuredClone(boxDefault.parameterName[this.kind]);
+            this.parameterValue = structuredClone(boxDefault.parameterValue[this.kind]);
+            this.parameterSource = [];
+            this.inletCount = this.parameterName.length;
+            for(var z=0;z<this.inletCount;z++){
+                this.parameterSource[z] = {kind:"specified"};
+            }
+            this.generateDataFromParameters();
+        }
+        else{
+            this.inletCount = programState.graphRegistry.get(this.kind).inputPorts.length;
+        }
         var inletHeight = programState.screenDim.menuTile/this.inletCount;
         var halfInletHeight = inletHeight/2;
         for(var z=0;z<this.inletCount;z++){
@@ -418,10 +427,6 @@ class Box{
         for(var z=1;z<this.inletCount;z++){
             this.inletDivide.push(inletHeight*z);
         }
-        this.outletCount = 1;
-        this.outletDivide = [];
-        this.outletCenter = [programState.screenDim.halfTile];
-        this.generateDataFromParameters();
     }
 }
 class Graph{
@@ -442,6 +447,13 @@ function isInRectangle(xTest,yTest,xBoundA,yBoundA,xBoundB,yBoundB){
     return ((xTest>Math.min(xBoundA,xBoundB))&&(xTest<Math.max(xBoundA,xBoundB))&&(yTest>Math.min(yBoundA,yBoundB))&&(Math.max(yBoundA,yBoundB)));
 }
 function processToIcon(processIn){
+    if(typeof processIn === 'number'){
+        const graph = programState.graphRegistry.get(processIn);
+        if(graph && graph.symbol){
+            return graph.symbol;
+        }
+        return "?";
+    }
     switch(processIn){
         case "balance": return "\u2696";
         case "beta": return "\u{3B2}";
@@ -953,6 +965,65 @@ cnvs.addEventListener('keydown', (e) => {
             }
         }
     }
+    if((e.key==="g")&&(e.ctrlKey)){
+        programState.graphRegistry.set(programState.nextGraphID,new Graph(programState.nextGraphID,`user${programState.nextGraphID}`));
+        var visibleGraph = programState.graphRegistry.get(programState.graphToDisplay);
+        var graphBeingDefined = programState.graphRegistry.get(programState.nextGraphID);
+        var boxTranslate = new Map();
+        programState.selectedBoxes.forEach((val) => {
+            var referencedBox = visibleGraph.box[val];
+            boxTranslate.set(val,graphBeingDefined.box.length);
+            graphBeingDefined.box.push(structuredClone(referencedBox));
+        });
+        visibleGraph.connection.forEach(conn => {
+            if(programState.selectedBoxes.has(conn.from.box) && programState.selectedBoxes.has(conn.to.box)){
+                graphBeingDefined.connection.push({from:{box:boxTranslate.get(conn.from.box),outlet:conn.from.outlet},to:{box:boxTranslate.get(conn.to.box),inlet:conn.to.inlet}});
+            }
+            if (!programState.selectedBoxes.has(conn.from.box) && programState.selectedBoxes.has(conn.to.box)) {
+                graphBeingDefined.inputPorts.push({
+                    name: `in${graphBeingDefined.inputPorts.length}`,
+                    internalNode: boxTranslate.get(conn.to.box),
+                    internalInlet: conn.to.inlet
+                });
+            }
+            if (programState.selectedBoxes.has(conn.from.box) && !programState.selectedBoxes.has(conn.to.box)) {
+                graphBeingDefined.outputPorts.push({
+                    name: `out${graphBeingDefined.outputPorts.length}`,
+                    internalNode: boxTranslate.get(conn.from.box),
+                    internalOutlet: conn.from.outlet
+                });
+            }
+        });
+        var totalX = 0; var totalY = 0; var divisor = programState.selectedBoxes.size;
+        var selectedIndices = Array.from(programState.selectedBoxes).sort((a,b) => b - a);
+        selectedIndices.forEach((val) => {
+            totalX += visibleGraph.box[val].x;
+            totalY += visibleGraph.box[val].y;
+            //This leaves connections independent of grouping right, but can rewire connections in/out of grouping wrongly
+            visibleGraph.connection.forEach(conn => {
+                if (conn.from.box > val) conn.from.box--;
+                if (conn.to.box > val) conn.to.box--;
+            });
+            visibleGraph.box.splice(val,1);
+        });
+        visibleGraph.box.push(new Box(totalX/divisor,totalY/divisor,programState.nextGraphID));
+        visibleGraph.box[visibleGraph.box.length-1].selected = true;
+        programState.selectedBoxes.clear();
+        programState.selectedBoxes.add(visibleGraph.box.length-1);
+        programState.nextGraphID++;
+    }
+    if((e.key==="i")&&(e.ctrlKey)){
+        programState.graphToDisplay = (programState.graphToDisplay+1)%programState.graphRegistry.size;
+    }
+    if((e.key==="r")&&(e.ctrlKey)){
+        console.log(programState.selectedBoxes.size);
+        if(programState.selectedBoxes.size===1){
+            var boxReference = programState.graphRegistry.get(programState.graphToDisplay).box[programState.selectedBoxes.values().next().value];
+            if(typeof boxReference.kind === "number"){
+                boxReference.randomSymbol();
+            }
+        }
+    }
     if((e.key==="v")&&(e.ctrlKey)){
         if(programState.canvasClipboard.content.length>0){
             for(var a=0;a<box.length;a++){
@@ -966,11 +1037,7 @@ cnvs.addEventListener('keydown', (e) => {
             }
             redraw(programState);
         }
-    }
-    if((e.key==="g")&&(e.ctrlKey)){
-        programState.graphRegistry.set(programState.nextGraphID,new Graph(programState.nextGraphID));
-        programState.nextGraphID++;
-    }
+    }    
     if(e.key==="Tab"){
         switch(programState.screenMode){
             case "boxEditor":
@@ -980,8 +1047,10 @@ cnvs.addEventListener('keydown', (e) => {
                 programState.screenMode = "boxEditor";
                 break;
         }
-        redraw(programState);
     }
+    redraw(programState);
+    updateTxtIn(programState);
+    updateTxtOut(programState);
 });
 txtIn.addEventListener('keydown', (e) => {
     const box = programState.graphRegistry.get(programState.graphToDisplay).box;
