@@ -1095,7 +1095,7 @@ cnvs.addEventListener('keydown', (e) => {
         if(programState.selectedBoxes.size===1){
             var boxReference = programState.graphRegistry.get(programState.graphToDisplay).box[programState.selectedBoxes.values().next().value];
             if(typeof boxReference.kind === "number"){
-                boxReference.randomSymbol();
+                programState.graphRegistry.get(boxReference.kind).randomSymbol();
             }
         }
     }
