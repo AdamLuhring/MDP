@@ -973,13 +973,11 @@ cnvs.addEventListener('keydown', (e) => {
         var visibleGraph = programState.graphRegistry.get(programState.graphToDisplay);
         var graphBeingDefined = programState.graphRegistry.get(programState.nextGraphID);
         var boxTranslate = new Map();
-        
         programState.selectedBoxes.forEach((val) => {
             var referencedBox = visibleGraph.box[val];
             boxTranslate.set(val, graphBeingDefined.box.length);
             graphBeingDefined.box.push(structuredClone(referencedBox));
         });
-        
         visibleGraph.connection.forEach(conn => {
             if(programState.selectedBoxes.has(conn.from.box) && programState.selectedBoxes.has(conn.to.box)){
                 graphBeingDefined.connection.push({
@@ -1002,8 +1000,6 @@ cnvs.addEventListener('keydown', (e) => {
                 });
             }
         });
-        
-        // Calculate center position
         var totalX = 0; var totalY = 0; 
         var selectedIndices = Array.from(programState.selectedBoxes);
         selectedIndices.forEach((val) => {
@@ -1012,13 +1008,9 @@ cnvs.addEventListener('keydown', (e) => {
         });
         var centerX = totalX / selectedIndices.length;
         var centerY = totalY / selectedIndices.length;
-        
-        // Create mapping from old indices to new indices after deletion
         var connectionTranslate = new Map();
         var remainingIndices = [];
         var newIndex = 0;
-        
-        // First pass: determine new indices for boxes that are NOT selected
         for (var i = 0; i < visibleGraph.box.length; i++) {
             if (!programState.selectedBoxes.has(i)) {
                 connectionTranslate.set(i, newIndex);
@@ -1026,25 +1018,17 @@ cnvs.addEventListener('keydown', (e) => {
                 newIndex++;
             }
         }
-        
-        // The new graph box will be added at the end
         var newBoxIndex = newIndex;
-        
-        // Rebuild connections with translated indices
         var newConnections = [];
         visibleGraph.connection.forEach(conn => {
             const fromSelected = programState.selectedBoxes.has(conn.from.box);
             const toSelected = programState.selectedBoxes.has(conn.to.box);
-            
             if (!fromSelected && !toSelected) {
-                // Both ends survive - translate indices
                 newConnections.push({
                     from: {box: connectionTranslate.get(conn.from.box), outlet: conn.from.outlet},
                     to: {box: connectionTranslate.get(conn.to.box), inlet: conn.to.inlet}
                 });
             } else if (!fromSelected && toSelected) {
-                // From outside to selected - becomes input to new box
-                // Need to find which input port this maps to
                 var inputPortIndex = graphBeingDefined.inputPorts.findIndex(port => 
                     port.internalNode === boxTranslate.get(conn.to.box) && 
                     port.internalInlet === conn.to.inlet
@@ -1056,7 +1040,6 @@ cnvs.addEventListener('keydown', (e) => {
                     });
                 }
             } else if (fromSelected && !toSelected) {
-                // From selected to outside - becomes output from new box
                 var outputPortIndex = graphBeingDefined.outputPorts.findIndex(port => 
                     port.internalNode === boxTranslate.get(conn.from.box) && 
                     port.internalOutlet === conn.from.outlet
@@ -1068,28 +1051,34 @@ cnvs.addEventListener('keydown', (e) => {
                     });
                 }
             }
-            // Connections where both ends are selected are discarded (internal to subgraph)
         });
-        
-        // Build new box array (only unselected boxes + new graph box)
         var newBoxes = [];
         remainingIndices.forEach(oldIdx => {
             newBoxes.push(visibleGraph.box[oldIdx]);
         });
         newBoxes.push(new Box(centerX, centerY, programState.nextGraphID));
         newBoxes[newBoxes.length - 1].selected = true;
-        
-        // Replace visible graph's boxes and connections
         visibleGraph.box = newBoxes;
         visibleGraph.connection = newConnections;
-        
-        // Update selected boxes
         programState.selectedBoxes.clear();
         programState.selectedBoxes.add(newBoxIndex);
+        menuHierarchy.userProcess.push(programState.nextGraphID);
         programState.nextGraphID++;
     }
     if((e.key==="i")&&(e.ctrlKey)){
-        programState.graphToDisplay = (programState.graphToDisplay+1)%programState.graphRegistry.size;
+        if(programState.selectedBoxes.size===1){
+            var selectedBoxIndex = programState.selectedBoxes.values().next().value;
+            var selectedBox = programState.graphRegistry.get(programState.graphToDisplay).box[selectedBoxIndex];
+            if(typeof selectedBox.kind === "number"){
+                programState.graphToDisplay = selectedBox.kind;
+            }
+            else {
+                programState.graphToDisplay = 0;
+            }
+        }
+        else{
+            programState.graphToDisplay = 0;
+        }
     }
     if((e.key==="r")&&(e.ctrlKey)){
         if(programState.selectedBoxes.size===1){
