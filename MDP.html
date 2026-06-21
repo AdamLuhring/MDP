@@ -675,8 +675,13 @@ function updateTxtIn(stateObject){
 };
 function updateTxtOut(stateObject){
     var outString = "menu: "+programState.submenu
-    if(stateObject.subprocess!="none"){
-        outString += "\nselection: "+programState.subprocess;
+    if(stateObject.subprocess!=="none"){
+        if(typeof stateObject.subprocess === "string"){
+            outString += "\nselection: "+programState.subprocess;
+        }
+        else{
+            outString += "\nselection: "+programState.graphRegistry.get(programState.subprocess).name;
+        }
     }
     txtOut.value = outString;
 }
@@ -758,8 +763,10 @@ function handleBoxEditorMouseUp(e){
                 case "background":
                     if(programState.selectedBoxes.size===1){
                         var theOne = programState.selectedBoxes.values().next().value;
-                        box[theOne].x += mouseX-programState.dragFrom.x;
-                        box[theOne].y += mouseY-programState.dragFrom.y;
+                        if(theOne===mouseDownResult.box){
+                            box[theOne].x += mouseX-programState.dragFrom.x;
+                            box[theOne].y += mouseY-programState.dragFrom.y;
+                        }
                     }
                     else{
                         //Should only do this moving if the original click was on one of the selected boxes
@@ -975,6 +982,7 @@ cnvs.addEventListener('keydown', (e) => {
         var boxTranslate = new Map();
         programState.selectedBoxes.forEach((val) => {
             var referencedBox = visibleGraph.box[val];
+            referencedBox.selected = false;
             boxTranslate.set(val, graphBeingDefined.box.length);
             graphBeingDefined.box.push(structuredClone(referencedBox));
         });
@@ -1069,12 +1077,14 @@ cnvs.addEventListener('keydown', (e) => {
         if(programState.selectedBoxes.size===1){
             var selectedBoxIndex = programState.selectedBoxes.values().next().value;
             var selectedBox = programState.graphRegistry.get(programState.graphToDisplay).box[selectedBoxIndex];
+            selectedBox.selected = false;
             if(typeof selectedBox.kind === "number"){
                 programState.graphToDisplay = selectedBox.kind;
             }
             else {
                 programState.graphToDisplay = 0;
             }
+            programState.selectedBoxes.clear();
         }
         else{
             programState.graphToDisplay = 0;
@@ -1112,6 +1122,7 @@ cnvs.addEventListener('keydown', (e) => {
                 break;
         }
     }
+    console.log(Array.from(programState.selectedBoxes).join(','));
     redraw(programState);
     updateTxtIn(programState);
     updateTxtOut(programState);
