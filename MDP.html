@@ -761,31 +761,21 @@ function handleBoxEditorMouseUp(e){
                     }
                     break;
                 case "background":
-                    if(programState.selectedBoxes.size===1){
-                        var theOne = programState.selectedBoxes.values().next().value;
-                        if(theOne===mouseDownResult.box){
-                            box[theOne].x += mouseX-programState.dragFrom.x;
-                            box[theOne].y += mouseY-programState.dragFrom.y;
+                    if((programState.selectedBoxes.size>1)&&(programState.selectedBoxes.has(mouseDownResult.box))){
+                        for(var a=0;a<box.length;a++){
+                            if(box[a].selected){
+                                box[a].x += mouseX-programState.dragFrom.x;
+                                box[a].y += mouseY-programState.dragFrom.y;
+                                box[a].x = Math.min(programState.screenDim.width,Math.max(0,box[a].x));
+                                box[a].y = Math.min(programState.screenDim.height,Math.max(0,box[a].y));
+                            }
                         }
                     }
                     else{
-                        //Should only do this moving if the original click was on one of the selected boxes
-                        if(box[mouseDownResult.box].selected){
-                            for(var a=0;a<box.length;a++){
-                                if(box[a].selected){
-                                    box[a].x += mouseX-programState.dragFrom.x;
-                                    box[a].y += mouseY-programState.dragFrom.y;
-                                    box[a].x = Math.min(programState.screenDim.width,Math.max(0,box[a].x));
-                                    box[a].y = Math.min(programState.screenDim.height,Math.max(0,box[a].y));
-                                }
-                            }
-                        }
-                        else{
-                            box[mouseDownResult.box].x += mouseX-programState.dragFrom.x;
-                            box[mouseDownResult.box].y += mouseY-programState.dragFrom.y;
-                            box[mouseDownResult.box].x = Math.min(programState.screenDim.width,Math.max(0,box[mouseDownResult.box].x));
-                            box[mouseDownResult.box].y = Math.min(programState.screenDim.height,Math.max(0,box[mouseDownResult.box].y));
-                        }
+                        box[mouseDownResult.box].x += mouseX-programState.dragFrom.x;
+                        box[mouseDownResult.box].y += mouseY-programState.dragFrom.y;
+                        box[mouseDownResult.box].x = Math.min(programState.screenDim.width,Math.max(0,box[mouseDownResult.box].x));
+                        box[mouseDownResult.box].y = Math.min(programState.screenDim.height,Math.max(0,box[mouseDownResult.box].y));
                     }
                     break;
             }
